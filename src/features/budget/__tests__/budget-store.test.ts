@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { deriveBudgetView } from '../budget-engine';
-import { createMemoryBudgetStorage, createBudgetStore } from '../store';
+import { createMemoryBudgetStorage, createBudgetStore, type BudgetStorage } from '../store';
 
 describe('budget store bootstrap', () => {
   it('returns null before onboarding exists', async () => {
@@ -77,6 +77,431 @@ describe('budget store bootstrap', () => {
     expect(reloadedView).toEqual(view);
   });
 
+  it('assigns money into a category for the current month', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent', 'Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const assignedView = await store.assignMoneyToCategory(
+      {
+        categoryId: initialView.categoryGroups[0].categories[0].id,
+        amountCents: 50_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    expect(assignedView.readyToAssignCents).toBe(75_500);
+    expect(assignedView.categoryGroups).toEqual([
+      {
+        id: expect.any(String),
+        name: 'Essentials',
+        categories: [
+          {
+            id: expect.any(String),
+            name: 'Rent',
+            assignedCents: 50_000,
+            activityCents: 0,
+            availableCents: 50_000,
+          },
+          {
+            id: expect.any(String),
+            name: 'Groceries',
+            assignedCents: 0,
+            activityCents: 0,
+            availableCents: 0,
+          },
+        ],
+      },
+    ]);
+
+    const reloadedView = await store.getCurrentBudgetView(new Date('2026-06-24T10:00:00.000Z'));
+    expect(reloadedView).toEqual(assignedView);
+  });
+
+  it('moves money between categories inside the current month without changing ready to assign', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent', 'Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const rentCategoryId = initialView.categoryGroups[0].categories[0].id;
+    const groceriesCategoryId = initialView.categoryGroups[0].categories[1].id;
+
+    await store.assignMoneyToCategory(
+      {
+        categoryId: rentCategoryId,
+        amountCents: 50_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const movedView = await store.moveMoneyBetweenCategories(
+      {
+        fromCategoryId: rentCategoryId,
+        toCategoryId: groceriesCategoryId,
+        amountCents: 20_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    expect(movedView.readyToAssignCents).toBe(75_500);
+    expect(movedView.categoryGroups).toEqual([
+      {
+        id: expect.any(String),
+        name: 'Essentials',
+        categories: [
+          {
+            id: expect.any(String),
+            name: 'Rent',
+            assignedCents: 30_000,
+            activityCents: 0,
+            availableCents: 30_000,
+          },
+          {
+            id: expect.any(String),
+            name: 'Groceries',
+            assignedCents: 20_000,
+            activityCents: 0,
+            availableCents: 20_000,
+          },
+        ],
+      },
+    ]);
+
+    const reloadedView = await store.getCurrentBudgetView(new Date('2026-06-24T10:00:00.000Z'));
+    expect(reloadedView).toEqual(movedView);
+  });
+
+  it('creates approved manual outflows and exposes them in the transaction ledger', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent', 'Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const rentCategoryId = initialView.categoryGroups[0].categories[0].id;
+
+    await store.assignMoneyToCategory(
+      {
+        categoryId: rentCategoryId,
+        amountCents: 50_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const updatedView = await store.createManualTransaction(
+      {
+        kind: 'outflow',
+        amountCents: 25_000,
+        occurredAt: '2026-06-25T12:00:00.000Z',
+        categoryId: rentCategoryId,
+        payee: 'Landlord',
+        memo: 'Late utility split',
+      },
+      new Date('2026-06-26T10:00:00.000Z')
+    );
+
+    expect(updatedView.readyToAssignCents).toBe(75_500);
+    expect(updatedView.categoryGroups[0].categories[0]).toMatchObject({
+      name: 'Rent',
+      assignedCents: 50_000,
+      activityCents: -25_000,
+      availableCents: 25_000,
+    });
+
+    const transactions = await store.getTransactions();
+    expect(transactions).toHaveLength(2);
+    expect(transactions[0]).toMatchObject({
+      source: 'manual',
+      kind: 'outflow',
+      status: 'approved',
+      amountCents: -25_000,
+      occurredAt: '2026-06-25T12:00:00.000Z',
+      categoryId: rentCategoryId,
+      payee: 'Landlord',
+      memo: 'Late utility split',
+    });
+  });
+
+  it('creates approved manual inflows as uncategorized cash', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    expect(initialView.readyToAssignCents).toBe(125_500);
+
+    const updatedView = await store.createManualTransaction(
+      {
+        kind: 'inflow',
+        amountCents: 20_000,
+        occurredAt: '2026-06-25T09:00:00.000Z',
+        categoryId: null,
+        payee: 'Refund',
+        memo: null,
+      },
+      new Date('2026-06-26T10:00:00.000Z')
+    );
+
+    expect(updatedView.readyToAssignCents).toBe(145_500);
+
+    const transactions = await store.getTransactions();
+    expect(transactions[0]).toMatchObject({
+      source: 'manual',
+      kind: 'inflow',
+      status: 'approved',
+      amountCents: 20_000,
+      categoryId: null,
+      payee: 'Refund',
+      memo: null,
+    });
+  });
+
+  it('imports a debug SMS as a needs-review candidate and updates authoritative balance before approval', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    expect(initialView.authoritativeBalanceCents).toBe(125_500);
+    expect(initialView.readyToAssignCents).toBe(125_500);
+
+    const importedView = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: 'BANK: Card purchase 1,234.00 RSD at IDEA. Balance 98,765.00 RSD. Date 2026-06-25 10:30.',
+        receivedAt: '2026-06-25T10:31:00.000Z',
+      },
+      new Date('2026-06-25T10:31:00.000Z')
+    );
+
+    expect(importedView.authoritativeBalanceCents).toBe(9_876_500);
+    expect(importedView.readyToAssignCents).toBe(125_500);
+
+    const inboxTransactions = await store.getInboxTransactions();
+    expect(inboxTransactions).toHaveLength(1);
+    expect(inboxTransactions[0]).toMatchObject({
+      source: 'sms',
+      kind: 'outflow',
+      status: 'needs_review',
+      amountCents: -123_400,
+      occurredAt: '2026-06-25T10:30:00.000Z',
+      categoryId: null,
+      balanceAfterCents: 9_876_500,
+      payee: 'IDEA',
+    });
+
+    const allTransactions = await store.getTransactions();
+    expect(allTransactions).toHaveLength(2);
+
+    const rawSmsMessages = await store.getRawSmsMessages();
+    expect(rawSmsMessages).toHaveLength(1);
+    expect(rawSmsMessages[0]).toMatchObject({
+      sender: 'BANK',
+      body: 'BANK: Card purchase 1,234.00 RSD at IDEA. Balance 98,765.00 RSD. Date 2026-06-25 10:30.',
+      receivedAt: '2026-06-25T10:31:00.000Z',
+    });
+
+    const parseResults = await store.getSmsParseResults();
+    expect(parseResults).toHaveLength(1);
+    expect(parseResults[0]).toMatchObject({
+      rawSmsMessageId: rawSmsMessages[0].id,
+      parserId: 'debug-bank-sms',
+      parserVersion: 1,
+      status: 'parsed',
+      transactionId: inboxTransactions[0].id,
+      kind: 'outflow',
+      amountCents: -123_400,
+      occurredAt: '2026-06-25T10:30:00.000Z',
+      balanceAfterCents: 9_876_500,
+      payee: 'IDEA',
+    });
+  });
+
+  it('rejects invalid approved manual transaction category invariants', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const rentCategoryId = initialView.categoryGroups[0].categories[0].id;
+
+    await expect(
+      store.createManualTransaction(
+        {
+          kind: 'outflow',
+          amountCents: 10_000,
+          occurredAt: '2026-06-25T09:00:00.000Z',
+          categoryId: null,
+          payee: 'Landlord',
+          memo: null,
+        },
+        new Date('2026-06-26T10:00:00.000Z')
+      )
+    ).rejects.toThrow(/require a category/);
+
+    await expect(
+      store.createManualTransaction(
+        {
+          kind: 'inflow',
+          amountCents: 10_000,
+          occurredAt: '2026-06-25T09:00:00.000Z',
+          categoryId: rentCategoryId,
+          payee: 'Refund',
+          memo: null,
+        },
+        new Date('2026-06-26T10:00:00.000Z')
+      )
+    ).rejects.toThrow(/must not have a category/);
+  });
+
+  it('edits manual transactions and applies month math using occurred at', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 100_000,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent'],
+          },
+        ],
+      },
+      new Date('2026-05-01T09:00:00.000Z')
+    );
+
+    const rentCategoryId = initialView.categoryGroups[0].categories[0].id;
+
+    await store.assignMoneyToCategory(
+      {
+        categoryId: rentCategoryId,
+        amountCents: 50_000,
+      },
+      new Date('2026-05-10T09:00:00.000Z')
+    );
+
+    await store.createManualTransaction(
+      {
+        kind: 'outflow',
+        amountCents: 20_000,
+        occurredAt: '2026-06-20T09:00:00.000Z',
+        categoryId: rentCategoryId,
+        payee: 'Landlord',
+        memo: null,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const createdTransaction = (await store.getTransactions())[0];
+
+    await store.updateManualTransaction(
+      {
+        transactionId: createdTransaction.id,
+        kind: 'outflow',
+        amountCents: 20_000,
+        occurredAt: '2026-05-20T09:00:00.000Z',
+        categoryId: rentCategoryId,
+        payee: 'Landlord',
+        memo: 'Backdated correction',
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const mayView = await store.getCurrentBudgetView(new Date('2026-05-24T10:00:00.000Z'));
+    const juneView = await store.getCurrentBudgetView(new Date('2026-06-24T10:00:00.000Z'));
+
+    expect(mayView?.categoryGroups[0].categories[0]).toMatchObject({
+      activityCents: -20_000,
+      availableCents: 30_000,
+    });
+    expect(juneView?.categoryGroups[0].categories[0]).toMatchObject({
+      activityCents: 0,
+      availableCents: 30_000,
+    });
+
+    const transactions = await store.getTransactions();
+    expect(transactions[0]).toMatchObject({
+      id: createdTransaction.id,
+      occurredAt: '2026-05-20T09:00:00.000Z',
+      memo: 'Backdated correction',
+    });
+  });
+
   it('rejects invalid currency codes during onboarding', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
 
@@ -93,6 +518,262 @@ describe('budget store bootstrap', () => {
         ],
       })
     ).rejects.toThrow(/valid 3-letter ISO code/);
+  });
+
+  it('rejects assigning money before onboarding exists', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    await expect(
+      store.assignMoneyToCategory(
+        {
+          categoryId: 'category-1',
+          amountCents: 1_000,
+        },
+        new Date('2026-06-24T10:00:00.000Z')
+      )
+    ).rejects.toThrow(/Complete onboarding/);
+  });
+
+  it('rejects zero or fractional cent assignment amounts', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const categoryId = initialView.categoryGroups[0].categories[0].id;
+
+    await expect(
+      store.assignMoneyToCategory(
+        {
+          categoryId,
+          amountCents: 0,
+        },
+        new Date('2026-06-24T10:00:00.000Z')
+      )
+    ).rejects.toThrow(/non-zero whole number of cents/);
+
+    await expect(
+      store.assignMoneyToCategory(
+        {
+          categoryId,
+          amountCents: 10.5,
+        },
+        new Date('2026-06-24T10:00:00.000Z')
+      )
+    ).rejects.toThrow(/non-zero whole number of cents/);
+  });
+
+  it('rejects assigning money into an unknown category', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    await expect(
+      store.assignMoneyToCategory(
+        {
+          categoryId: 'missing-category',
+          amountCents: 1_000,
+        },
+        new Date('2026-06-24T10:00:00.000Z')
+      )
+    ).rejects.toThrow(/Category does not exist/);
+  });
+
+  it('allows negative ready to assign when the current month is over-assigned', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const assignedView = await store.assignMoneyToCategory(
+      {
+        categoryId: initialView.categoryGroups[0].categories[0].id,
+        amountCents: 130_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    expect(assignedView.readyToAssignCents).toBe(-4_500);
+    expect(assignedView.categoryGroups[0].categories[0].assignedCents).toBe(130_000);
+    expect(assignedView.categoryGroups[0].categories[0].availableCents).toBe(130_000);
+  });
+
+  it('preserves both assignment events when two assign actions overlap', async () => {
+    const store = createBudgetStore(createDelayedWriteBudgetStorage());
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent', 'Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const rentCategoryId = initialView.categoryGroups[0].categories[0].id;
+    const groceriesCategoryId = initialView.categoryGroups[0].categories[1].id;
+
+    await Promise.all([
+      store.assignMoneyToCategory(
+        {
+          categoryId: rentCategoryId,
+          amountCents: 30_000,
+        },
+        new Date('2026-06-24T10:00:00.000Z')
+      ),
+      store.assignMoneyToCategory(
+        {
+          categoryId: groceriesCategoryId,
+          amountCents: 20_000,
+        },
+        new Date('2026-06-24T10:00:00.000Z')
+      ),
+    ]);
+
+    const reloadedView = await store.getCurrentBudgetView(new Date('2026-06-24T10:00:00.000Z'));
+
+    expect(reloadedView?.readyToAssignCents).toBe(75_500);
+    expect(reloadedView?.categoryGroups).toEqual([
+      {
+        id: expect.any(String),
+        name: 'Essentials',
+        categories: [
+          {
+            id: expect.any(String),
+            name: 'Rent',
+            assignedCents: 30_000,
+            activityCents: 0,
+            availableCents: 30_000,
+          },
+          {
+            id: expect.any(String),
+            name: 'Groceries',
+            assignedCents: 20_000,
+            activityCents: 0,
+            availableCents: 20_000,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('rejects moving money to the same category', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const categoryId = initialView.categoryGroups[0].categories[0].id;
+
+    await store.assignMoneyToCategory(
+      {
+        categoryId,
+        amountCents: 10_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    await expect(
+      store.moveMoneyBetweenCategories(
+        {
+          fromCategoryId: categoryId,
+          toCategoryId: categoryId,
+          amountCents: 1_000,
+        },
+        new Date('2026-06-24T10:00:00.000Z')
+      )
+    ).rejects.toThrow(/different categories/);
+  });
+
+  it('rejects moving more money than the source category currently has available', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent', 'Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const rentCategoryId = initialView.categoryGroups[0].categories[0].id;
+    const groceriesCategoryId = initialView.categoryGroups[0].categories[1].id;
+
+    await store.assignMoneyToCategory(
+      {
+        categoryId: rentCategoryId,
+        amountCents: 10_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    await expect(
+      store.moveMoneyBetweenCategories(
+        {
+          fromCategoryId: rentCategoryId,
+          toCategoryId: groceriesCategoryId,
+          amountCents: 20_000,
+        },
+        new Date('2026-06-24T10:00:00.000Z')
+      )
+    ).rejects.toThrow(/available/);
   });
 });
 
@@ -140,6 +821,8 @@ describe('budget engine month math', () => {
           },
         ],
         assignmentEvents: [],
+        rawSmsMessages: [],
+        smsParseResults: [],
       },
       new Date('2026-06-24T10:00:00.000Z')
     );
@@ -148,4 +831,95 @@ describe('budget engine month math', () => {
     expect(view.authoritativeBalanceCents).toBe(90_000);
     expect(view.monthKey).toBe('2026-06');
   });
+
+  it('reduces next month ready to assign by prior-month overspending', () => {
+    const view = deriveBudgetView(
+      {
+        account: {
+          id: 'account-1',
+          name: 'Main account',
+          currencyCode: 'RSD',
+          createdAt: '2026-05-01T09:00:00.000Z',
+        },
+        categoryGroups: [
+          {
+            id: 'group-1',
+            name: 'Essentials',
+            sortOrder: 0,
+            createdAt: '2026-05-01T09:00:00.000Z',
+          },
+        ],
+        categories: [
+          {
+            id: 'category-1',
+            groupId: 'group-1',
+            name: 'Rent',
+            sortOrder: 0,
+            createdAt: '2026-05-01T09:00:00.000Z',
+          },
+        ],
+        transactions: [
+          {
+            id: 'txn-1',
+            accountId: 'account-1',
+            source: 'starting_balance',
+            kind: 'inflow',
+            status: 'approved',
+            amountCents: 100_000,
+            occurredAt: '2026-05-01T09:00:00.000Z',
+            categoryId: null,
+            balanceAfterCents: 100_000,
+            payee: null,
+            memo: 'Starting balance',
+            createdAt: '2026-05-01T09:00:00.000Z',
+          },
+          {
+            id: 'txn-2',
+            accountId: 'account-1',
+            source: 'manual',
+            kind: 'outflow',
+            status: 'approved',
+            amountCents: -90_000,
+            occurredAt: '2026-05-20T09:00:00.000Z',
+            categoryId: 'category-1',
+            balanceAfterCents: 10_000,
+            payee: 'Landlord',
+            memo: null,
+            createdAt: '2026-05-20T09:00:00.000Z',
+          },
+        ],
+        assignmentEvents: [
+          {
+            id: 'assignment-1',
+            categoryId: 'category-1',
+            monthKey: '2026-05',
+            amountCents: 70_000,
+            createdAt: '2026-05-10T09:00:00.000Z',
+          },
+        ],
+        rawSmsMessages: [],
+        smsParseResults: [],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    expect(view.readyToAssignCents).toBe(10_000);
+    expect(view.categoryGroups[0].categories[0].availableCents).toBe(0);
+    expect(view.authoritativeBalanceCents).toBe(10_000);
+  });
 });
+
+function createDelayedWriteBudgetStorage(): BudgetStorage {
+  const storage = createMemoryBudgetStorage();
+
+  return {
+    async readSnapshot() {
+      return storage.readSnapshot();
+    },
+
+    async writeSnapshot(snapshot) {
+      await Promise.resolve();
+      await storage.writeSnapshot(snapshot);
+    },
+  };
+}

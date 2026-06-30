@@ -41,6 +41,32 @@ export type CanonicalTransaction = {
   createdAt: string;
 };
 
+export type RawSmsMessage = {
+  id: string;
+  sender: string;
+  body: string;
+  receivedAt: string;
+  createdAt: string;
+};
+
+export type SmsParseResultStatus = 'parsed' | 'unparseable';
+
+export type SmsParseResult = {
+  id: string;
+  rawSmsMessageId: string;
+  parserId: string;
+  parserVersion: number;
+  status: SmsParseResultStatus;
+  transactionId: string | null;
+  kind: TransactionKind | null;
+  amountCents: number | null;
+  occurredAt: string | null;
+  balanceAfterCents: number | null;
+  payee: string | null;
+  memo: string | null;
+  createdAt: string;
+};
+
 export type AssignmentEvent = {
   id: string;
   categoryId: string;
@@ -55,6 +81,8 @@ export type BudgetSnapshot = {
   categories: Category[];
   transactions: CanonicalTransaction[];
   assignmentEvents: AssignmentEvent[];
+  rawSmsMessages: RawSmsMessage[];
+  smsParseResults: SmsParseResult[];
 };
 
 export type OnboardingCategoryGroupInput = {

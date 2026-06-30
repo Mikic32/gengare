@@ -202,7 +202,7 @@ function sumOverspending(categoryTotals: Map<string, CategoryMonthTotals>): numb
 
 function deriveAuthoritativeBalance(transactions: CanonicalTransaction[]): number {
   const latestWithBalance = [...transactions]
-    .filter((transaction) => transaction.status === 'approved' && transaction.balanceAfterCents !== null)
+    .filter((transaction) => transaction.status !== 'ignored' && transaction.balanceAfterCents !== null)
     .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
     .at(-1);
 

@@ -2,7 +2,16 @@ import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
 
 import type { BudgetStorage } from './store';
-import type { Account, AssignmentEvent, BudgetSnapshot, CanonicalTransaction, Category, CategoryGroup } from './types';
+import type {
+  Account,
+  AssignmentEvent,
+  BudgetSnapshot,
+  CanonicalTransaction,
+  Category,
+  CategoryGroup,
+  RawSmsMessage,
+  SmsParseResult,
+} from './types';
 
 const DB_NAME = 'gengare.db';
 const WEB_STORAGE_KEY = 'gengare-budget-snapshot';
@@ -54,6 +63,30 @@ type AssignmentEventRow = {
   created_at: string;
 };
 
+type RawSmsMessageRow = {
+  id: string;
+  sender: string;
+  body: string;
+  received_at: string;
+  created_at: string;
+};
+
+type SmsParseResultRow = {
+  id: string;
+  raw_sms_message_id: string;
+  parser_id: string;
+  parser_version: number;
+  status: SmsParseResult['status'];
+  transaction_id: string | null;
+  kind: SmsParseResult['kind'];
+  amount_cents: number | null;
+  occurred_at: string | null;
+  balance_after_cents: number | null;
+  payee: string | null;
+  memo: string | null;
+  created_at: string;
+};
+
 let databasePromise: Promise<SQLiteDatabase> | null = null;
 
 export function createAppBudgetStorage(): BudgetStorage {
@@ -83,6 +116,12 @@ function createSQLiteBudgetStorage(): BudgetStorage {
       const assignmentEventRows = await db.getAllAsync<AssignmentEventRow>(
         'SELECT id, category_id, month_key, amount_cents, created_at FROM assignment_events ORDER BY month_key ASC, created_at ASC'
       );
+      const rawSmsMessageRows = await db.getAllAsync<RawSmsMessageRow>(
+        'SELECT id, sender, body, received_at, created_at FROM raw_sms_messages ORDER BY received_at ASC, created_at ASC'
+      );
+      const smsParseResultRows = await db.getAllAsync<SmsParseResultRow>(
+        'SELECT id, raw_sms_message_id, parser_id, parser_version, status, transaction_id, kind, amount_cents, occurred_at, balance_after_cents, payee, memo, created_at FROM sms_parse_results ORDER BY created_at ASC'
+      );
 
       return {
         account: accountRow ? mapAccountRow(accountRow) : null,
@@ -90,6 +129,8 @@ function createSQLiteBudgetStorage(): BudgetStorage {
         categories: categoryRows.map(mapCategoryRow),
         transactions: transactionRows.map(mapTransactionRow),
         assignmentEvents: assignmentEventRows.map(mapAssignmentEventRow),
+        rawSmsMessages: rawSmsMessageRows.map(mapRawSmsMessageRow),
+        smsParseResults: smsParseResultRows.map(mapSmsParseResultRow),
       };
     },
 
@@ -98,6 +139,8 @@ function createSQLiteBudgetStorage(): BudgetStorage {
       await ensureSchema(db);
       await db.withTransactionAsync(async () => {
         await db.execAsync(`
+          DELETE FROM sms_parse_results;
+          DELETE FROM raw_sms_messages;
           DELETE FROM assignment_events;
           DELETE FROM transactions;
           DELETE FROM categories;
@@ -154,6 +197,36 @@ function createSQLiteBudgetStorage(): BudgetStorage {
           );
         }
 
+        for (const rawSmsMessage of snapshot.rawSmsMessages) {
+          await db.runAsync(
+            'INSERT INTO raw_sms_messages (id, sender, body, received_at, created_at) VALUES (?, ?, ?, ?, ?)',
+            rawSmsMessage.id,
+            rawSmsMessage.sender,
+            rawSmsMessage.body,
+            rawSmsMessage.receivedAt,
+            rawSmsMessage.createdAt
+          );
+        }
+
+        for (const smsParseResult of snapshot.smsParseResults) {
+          await db.runAsync(
+            'INSERT INTO sms_parse_results (id, raw_sms_message_id, parser_id, parser_version, status, transaction_id, kind, amount_cents, occurred_at, balance_after_cents, payee, memo, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            smsParseResult.id,
+            smsParseResult.rawSmsMessageId,
+            smsParseResult.parserId,
+            smsParseResult.parserVersion,
+            smsParseResult.status,
+            smsParseResult.transactionId,
+            smsParseResult.kind,
+            smsParseResult.amountCents,
+            smsParseResult.occurredAt,
+            smsParseResult.balanceAfterCents,
+            smsParseResult.payee,
+            smsParseResult.memo,
+            smsParseResult.createdAt
+          );
+        }
+
         for (const assignmentEvent of snapshot.assignmentEvents) {
           await db.runAsync(
             'INSERT INTO assignment_events (id, category_id, month_key, amount_cents, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -181,7 +254,7 @@ function createWebBudgetStorage(): BudgetStorage {
         return emptySnapshot();
       }
 
-      return JSON.parse(raw) as BudgetSnapshot;
+      return normalizeSnapshot(JSON.parse(raw) as Partial<BudgetSnapshot>);
     },
 
     async writeSnapshot(snapshot) {
@@ -254,6 +327,32 @@ async function ensureSchema(db: SQLiteDatabase) {
       created_at TEXT NOT NULL,
       FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS raw_sms_messages (
+      id TEXT PRIMARY KEY NOT NULL,
+      sender TEXT NOT NULL,
+      body TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sms_parse_results (
+      id TEXT PRIMARY KEY NOT NULL,
+      raw_sms_message_id TEXT NOT NULL,
+      parser_id TEXT NOT NULL,
+      parser_version INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      transaction_id TEXT,
+      kind TEXT,
+      amount_cents INTEGER,
+      occurred_at TEXT,
+      balance_after_cents INTEGER,
+      payee TEXT,
+      memo TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (raw_sms_message_id) REFERENCES raw_sms_messages (id) ON DELETE CASCADE,
+      FOREIGN KEY (transaction_id) REFERENCES transactions (id) ON DELETE SET NULL
+    );
   `);
 }
 
@@ -312,6 +411,34 @@ function mapAssignmentEventRow(row: AssignmentEventRow): AssignmentEvent {
   };
 }
 
+function mapRawSmsMessageRow(row: RawSmsMessageRow): RawSmsMessage {
+  return {
+    id: row.id,
+    sender: row.sender,
+    body: row.body,
+    receivedAt: row.received_at,
+    createdAt: row.created_at,
+  };
+}
+
+function mapSmsParseResultRow(row: SmsParseResultRow): SmsParseResult {
+  return {
+    id: row.id,
+    rawSmsMessageId: row.raw_sms_message_id,
+    parserId: row.parser_id,
+    parserVersion: row.parser_version,
+    status: row.status,
+    transactionId: row.transaction_id,
+    kind: row.kind,
+    amountCents: row.amount_cents,
+    occurredAt: row.occurred_at,
+    balanceAfterCents: row.balance_after_cents,
+    payee: row.payee,
+    memo: row.memo,
+    createdAt: row.created_at,
+  };
+}
+
 function emptySnapshot(): BudgetSnapshot {
   return {
     account: null,
@@ -319,5 +446,19 @@ function emptySnapshot(): BudgetSnapshot {
     categories: [],
     transactions: [],
     assignmentEvents: [],
+    rawSmsMessages: [],
+    smsParseResults: [],
+  };
+}
+
+function normalizeSnapshot(snapshot: Partial<BudgetSnapshot>): BudgetSnapshot {
+  return {
+    account: snapshot.account ?? null,
+    categoryGroups: snapshot.categoryGroups ?? [],
+    categories: snapshot.categories ?? [],
+    transactions: snapshot.transactions ?? [],
+    assignmentEvents: snapshot.assignmentEvents ?? [],
+    rawSmsMessages: snapshot.rawSmsMessages ?? [],
+    smsParseResults: snapshot.smsParseResults ?? [],
   };
 }
