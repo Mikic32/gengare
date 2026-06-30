@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
 import { budgetStore } from '@/src/features/budget/app-store';
+import { toLocalDateKey, toMonthKey } from '@/src/features/budget/budget-engine';
 import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
 import type { BudgetView, CanonicalTransaction } from '@/src/features/budget/types';
 import { router, Stack } from 'expo-router';
@@ -144,22 +145,30 @@ export default function TransactionsScreen() {
     setSmsImportError(null);
 
     try {
-      const [nextBudgetView, nextTransactions, nextInboxTransactions] = await Promise.all([
-        budgetStore.importDebugSms(
-          {
-            sender: debugSmsSender,
-            body: debugSmsBody,
-            receivedAt: new Date().toISOString(),
-          },
-          new Date()
-        ),
+      const importResult = await budgetStore.importDebugSms(
+        {
+          sender: debugSmsSender,
+          body: debugSmsBody,
+          receivedAt: new Date().toISOString(),
+        },
+        new Date()
+      );
+      const [nextTransactions, nextInboxTransactions] = await Promise.all([
         budgetStore.getTransactions(),
         budgetStore.getInboxTransactions(),
       ]);
 
-      setBudgetView(nextBudgetView);
+      setBudgetView(importResult.budgetView);
       setTransactions(nextTransactions);
       setInboxTransactions(nextInboxTransactions);
+
+      if (importResult.parseResult.status === 'unparseable') {
+        const message = importResult.parseResult.memo ?? 'SMS was saved, but parsing failed.';
+        setSmsImportError(message);
+        Alert.alert('SMS saved but not parsed', message);
+        return;
+      }
+
       setDebugSmsBody(createSampleDebugSmsBody());
     } catch (error) {
       const message = getErrorMessage(error);
@@ -176,7 +185,7 @@ export default function TransactionsScreen() {
       transactionId: transaction.id,
       kind: transaction.kind,
       amount: centsToDecimalString(Math.abs(transaction.amountCents)),
-      occurredOn: transaction.occurredAt.slice(0, 10),
+      occurredOn: toLocalDateKey(transaction.occurredAt),
       categoryId: transaction.categoryId,
       payee: transaction.payee ?? '',
       memo: transaction.memo ?? '',
@@ -293,7 +302,13 @@ export default function TransactionsScreen() {
                 className="min-h-32 rounded-xl border border-border bg-background px-4 py-3 text-foreground"
                 value={debugSmsBody}
                 onChangeText={setDebugSmsBody}
-                placeholder="BANK: Card purchase 1,234.00 RSD at IDEA. Balance 98,765.00 RSD. Date 2026-06-25 10:30."
+                placeholder={[
+                  'Datum: 30.06.2026, Vreme: 03:24:04',
+                  'Tekuci racun: 93005***84',
+                  'Odliv: 1.568,80 RSD',
+                  'Raspoloziva sredstva: 4.527,55 RSD',
+                  'Vasa OTP banka',
+                ].join('\n')}
                 placeholderTextColor="#71717a"
                 multiline
                 textAlignVertical="top"
@@ -303,8 +318,8 @@ export default function TransactionsScreen() {
 
             <View className="rounded-xl bg-muted/40 p-3">
               <Text className="text-sm text-muted-foreground">
-                Supported samples: <Text variant="code">Card purchase ... at PAYEE</Text> and{' '}
-                <Text variant="code">Incoming transfer ... from PAYEE</Text>.
+                Supported sample: OTP banka multiline `Priliv` / `Odliv` SMS with `Datum`, `Vreme`, and
+                `Raspoloziva sredstva`.
               </Text>
             </View>
 
@@ -439,7 +454,7 @@ export default function TransactionsScreen() {
                         {transaction.payee ?? (transaction.kind === 'inflow' ? 'SMS inflow' : 'SMS outflow')}
                       </Text>
                       <Text className="text-sm text-muted-foreground">
-                        {transaction.occurredAt.slice(0, 10)} · Waiting for review
+                        {toLocalDateKey(transaction.occurredAt)} · Waiting for review
                       </Text>
                     </View>
                     <View className="items-end gap-1">
@@ -491,7 +506,7 @@ export default function TransactionsScreen() {
                           {transaction.payee ?? (transaction.kind === 'inflow' ? 'Manual inflow' : 'Manual outflow')}
                         </Text>
                         <Text className="text-sm text-muted-foreground">
-                          {transaction.occurredAt.slice(0, 10)} · Budget month {transaction.occurredAt.slice(0, 7)}
+                          {toLocalDateKey(transaction.occurredAt)} · Budget month {toMonthKey(transaction.occurredAt)}
                         </Text>
                       </View>
                       <View className="items-end gap-2">
@@ -580,7 +595,7 @@ function createEmptyDraft(): TransactionDraft {
     transactionId: null,
     kind: 'outflow',
     amount: '',
-    occurredOn: new Date().toISOString().slice(0, 10),
+    occurredOn: toLocalDateKey(new Date()),
     categoryId: null,
     payee: '',
     memo: '',
@@ -588,7 +603,13 @@ function createEmptyDraft(): TransactionDraft {
 }
 
 function createSampleDebugSmsBody() {
-  return 'BANK: Card purchase 1,234.00 RSD at IDEA. Balance 98,765.00 RSD. Date 2026-06-25 10:30.';
+  return [
+    'Datum: 30.06.2026, Vreme: 03:24:04',
+    'Tekuci racun: 93005***84',
+    'Odliv: 1.568,80 RSD',
+    'Raspoloziva sredstva: 4.527,55 RSD',
+    'Vasa OTP banka',
+  ].join('\n');
 }
 
 function centsToDecimalString(amountCents: number) {

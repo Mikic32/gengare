@@ -44,6 +44,12 @@ export type DebugSmsImportInput = {
   receivedAt: string;
 };
 
+export type DebugSmsImportResult = {
+  budgetView: BudgetView;
+  parseResult: SmsParseResult;
+  transaction: BudgetSnapshot['transactions'][number] | null;
+};
+
 export type BudgetStore = {
   getCurrentBudgetView(now?: Date): Promise<BudgetView | null>;
   getTransactions(): Promise<BudgetSnapshot['transactions']>;
@@ -55,7 +61,7 @@ export type BudgetStore = {
   moveMoneyBetweenCategories(input: MoveMoneyBetweenCategoriesInput, now?: Date): Promise<BudgetView>;
   createManualTransaction(input: ManualTransactionInput, now?: Date): Promise<BudgetView>;
   updateManualTransaction(input: UpdateManualTransactionInput, now?: Date): Promise<BudgetView>;
-  importDebugSms(input: DebugSmsImportInput, now?: Date): Promise<BudgetView>;
+  importDebugSms(input: DebugSmsImportInput, now?: Date): Promise<DebugSmsImportResult>;
 };
 
 const EMPTY_SNAPSHOT: BudgetSnapshot = {
@@ -341,7 +347,15 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
           createdAt,
         } satisfies RawSmsMessage;
 
-        const parsedSms = parseDebugBankSms(normalized.body);
+        let parsedSms: ReturnType<typeof parseDebugBankSms> = null;
+        let parseFailureMessage: string | null = null;
+
+        try {
+          parsedSms = parseDebugBankSms(normalized.body);
+        } catch (error) {
+          parseFailureMessage = getErrorMessage(error);
+        }
+
         const transaction =
           parsedSms === null
             ? null
@@ -372,7 +386,7 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
           occurredAt: transaction?.occurredAt ?? null,
           balanceAfterCents: transaction?.balanceAfterCents ?? null,
           payee: transaction?.payee ?? null,
-          memo: transaction?.memo ?? null,
+          memo: transaction?.memo ?? parseFailureMessage,
           createdAt,
         } satisfies SmsParseResult;
 
@@ -384,7 +398,11 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
         };
 
         await storage.writeSnapshot(nextSnapshot);
-        return deriveBudgetView(nextSnapshot, now);
+        return {
+          budgetView: deriveBudgetView(nextSnapshot, now),
+          parseResult: smsParseResult,
+          transaction,
+        };
       });
     },
   };
@@ -574,6 +592,14 @@ function normalizeDebugSmsImportInput(input: DebugSmsImportInput): DebugSmsImpor
 function normalizeOptionalText(value: string | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return 'Unknown parser error.';
 }
 
 function assertEditableManualTransaction(transaction: BudgetSnapshot['transactions'][number]) {

@@ -85,7 +85,12 @@ export function deriveBudgetView(snapshot: BudgetSnapshot, now: Date = new Date(
 
 export function toMonthKey(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
-  return date.toISOString().slice(0, 7);
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}`;
+}
+
+export function toLocalDateKey(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
 }
 
 function collectRelevantMonthKeys(snapshot: BudgetSnapshot, currentMonthKey: string): string[] {
@@ -203,10 +208,28 @@ function sumOverspending(categoryTotals: Map<string, CategoryMonthTotals>): numb
 function deriveAuthoritativeBalance(transactions: CanonicalTransaction[]): number {
   const latestWithBalance = [...transactions]
     .filter((transaction) => transaction.status !== 'ignored' && transaction.balanceAfterCents !== null)
-    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
+    .sort(compareTransactionsByBalanceEvidenceOrder)
     .at(-1);
 
   return latestWithBalance?.balanceAfterCents ?? 0;
+}
+
+function compareTransactionsByBalanceEvidenceOrder(left: CanonicalTransaction, right: CanonicalTransaction) {
+  const occurredComparison = left.occurredAt.localeCompare(right.occurredAt);
+  if (occurredComparison !== 0) {
+    return occurredComparison;
+  }
+
+  const createdComparison = left.createdAt.localeCompare(right.createdAt);
+  if (createdComparison !== 0) {
+    return createdComparison;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, '0');
 }
 
 function buildGroupViews(

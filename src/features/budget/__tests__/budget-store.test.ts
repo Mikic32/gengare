@@ -326,17 +326,27 @@ describe('budget store bootstrap', () => {
     expect(initialView.authoritativeBalanceCents).toBe(125_500);
     expect(initialView.readyToAssignCents).toBe(125_500);
 
-    const importedView = await store.importDebugSms(
+    const importResult = await store.importDebugSms(
       {
         sender: 'BANK',
-        body: 'BANK: Card purchase 1,234.00 RSD at IDEA. Balance 98,765.00 RSD. Date 2026-06-25 10:30.',
+        body: [
+          'Datum: 30.06.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
         receivedAt: '2026-06-25T10:31:00.000Z',
       },
       new Date('2026-06-25T10:31:00.000Z')
     );
 
-    expect(importedView.authoritativeBalanceCents).toBe(9_876_500);
+    const importedView = importResult.budgetView;
+    expect(importedView.authoritativeBalanceCents).toBe(452_755);
     expect(importedView.readyToAssignCents).toBe(125_500);
+    const expectedOccurredAt = new Date(2026, 5, 30, 3, 24, 4, 0).toISOString();
+    expect(importResult.parseResult.status).toBe('parsed');
+    expect(importResult.transaction?.status).toBe('needs_review');
 
     const inboxTransactions = await store.getInboxTransactions();
     expect(inboxTransactions).toHaveLength(1);
@@ -344,11 +354,11 @@ describe('budget store bootstrap', () => {
       source: 'sms',
       kind: 'outflow',
       status: 'needs_review',
-      amountCents: -123_400,
-      occurredAt: '2026-06-25T10:30:00.000Z',
+      amountCents: -156_880,
+      occurredAt: expectedOccurredAt,
       categoryId: null,
-      balanceAfterCents: 9_876_500,
-      payee: 'IDEA',
+      balanceAfterCents: 452_755,
+      payee: null,
     });
 
     const allTransactions = await store.getTransactions();
@@ -358,7 +368,13 @@ describe('budget store bootstrap', () => {
     expect(rawSmsMessages).toHaveLength(1);
     expect(rawSmsMessages[0]).toMatchObject({
       sender: 'BANK',
-      body: 'BANK: Card purchase 1,234.00 RSD at IDEA. Balance 98,765.00 RSD. Date 2026-06-25 10:30.',
+      body: [
+        'Datum: 30.06.2026, Vreme: 03:24:04',
+        'Tekuci racun: 93005***84',
+        'Odliv: 1.568,80 RSD',
+        'Raspoloziva sredstva: 4.527,55 RSD',
+        'Vasa OTP banka',
+      ].join('\n'),
       receivedAt: '2026-06-25T10:31:00.000Z',
     });
 
@@ -371,11 +387,84 @@ describe('budget store bootstrap', () => {
       status: 'parsed',
       transactionId: inboxTransactions[0].id,
       kind: 'outflow',
-      amountCents: -123_400,
-      occurredAt: '2026-06-25T10:30:00.000Z',
-      balanceAfterCents: 9_876_500,
-      payee: 'IDEA',
+      amountCents: -156_880,
+      occurredAt: expectedOccurredAt,
+      balanceAfterCents: 452_755,
+      payee: null,
     });
+  });
+
+  it('persists raw SMS and an unparseable parse result when parsing throws', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const importResult = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 31.02.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-06-25T10:31:00.000Z',
+      },
+      new Date('2026-06-25T10:31:00.000Z')
+    );
+
+    const importedView = importResult.budgetView;
+    expect(importedView.authoritativeBalanceCents).toBe(125_500);
+    expect(importedView.readyToAssignCents).toBe(125_500);
+    expect(importResult.parseResult.status).toBe('unparseable');
+    expect(importResult.transaction).toBeNull();
+
+    expect(await store.getInboxTransactions()).toEqual([]);
+
+    const allTransactions = await store.getTransactions();
+    expect(allTransactions).toHaveLength(1);
+
+    const rawSmsMessages = await store.getRawSmsMessages();
+    expect(rawSmsMessages).toHaveLength(1);
+    expect(rawSmsMessages[0]).toMatchObject({
+      sender: 'BANK',
+      body: [
+        'Datum: 31.02.2026, Vreme: 03:24:04',
+        'Tekuci racun: 93005***84',
+        'Odliv: 1.568,80 RSD',
+        'Raspoloziva sredstva: 4.527,55 RSD',
+        'Vasa OTP banka',
+      ].join('\n'),
+    });
+
+    const parseResults = await store.getSmsParseResults();
+    expect(parseResults).toHaveLength(1);
+    expect(parseResults[0]).toMatchObject({
+      rawSmsMessageId: rawSmsMessages[0].id,
+      parserId: 'debug-bank-sms',
+      parserVersion: 1,
+      status: 'unparseable',
+      transactionId: null,
+      kind: null,
+      amountCents: null,
+      occurredAt: null,
+      balanceAfterCents: null,
+    });
+    expect(parseResults[0].memo).toMatch(/invalid occurred-at timestamp/i);
   });
 
   it('rejects invalid approved manual transaction category invariants', async () => {
@@ -906,6 +995,57 @@ describe('budget engine month math', () => {
     expect(view.readyToAssignCents).toBe(10_000);
     expect(view.categoryGroups[0].categories[0].availableCents).toBe(0);
     expect(view.authoritativeBalanceCents).toBe(10_000);
+  });
+
+  it('uses created-at as a stable tiebreaker for equal occurred-at authoritative balances', () => {
+    const view = deriveBudgetView(
+      {
+        account: {
+          id: 'account-1',
+          name: 'Main account',
+          currencyCode: 'RSD',
+          createdAt: '2026-06-01T09:00:00.000Z',
+        },
+        categoryGroups: [],
+        categories: [],
+        transactions: [
+          {
+            id: 'txn-1',
+            accountId: 'account-1',
+            source: 'manual',
+            kind: 'inflow',
+            status: 'approved',
+            amountCents: 100_000,
+            occurredAt: '2026-06-25T10:30:00.000Z',
+            categoryId: null,
+            balanceAfterCents: 100_000,
+            payee: null,
+            memo: null,
+            createdAt: '2026-06-25T10:31:00.000Z',
+          },
+          {
+            id: 'txn-2',
+            accountId: 'account-1',
+            source: 'sms',
+            kind: 'inflow',
+            status: 'needs_review',
+            amountCents: 200_000,
+            occurredAt: '2026-06-25T10:30:00.000Z',
+            categoryId: null,
+            balanceAfterCents: 200_000,
+            payee: 'Employer',
+            memo: null,
+            createdAt: '2026-06-25T10:32:00.000Z',
+          },
+        ],
+        assignmentEvents: [],
+        rawSmsMessages: [],
+        smsParseResults: [],
+      },
+      new Date('2026-06-25T12:00:00.000Z')
+    );
+
+    expect(view.authoritativeBalanceCents).toBe(200_000);
   });
 });
 

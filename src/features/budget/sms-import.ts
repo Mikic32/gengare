@@ -14,56 +14,76 @@ export type ParsedDebugSms = {
 };
 
 export function parseDebugBankSms(body: string): ParsedDebugSms | null {
-  const trimmed = body.trim();
-
-  const outflowMatch = trimmed.match(
-    /^BANK:\s*Card purchase\s+([0-9][\d.,]*)\s+([A-Z]{3})\s+at\s+(.+?)\.\s+Balance\s+([0-9][\d.,]*)\s+\2\.\s+Date\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\.$/i
-  );
-
-  if (outflowMatch) {
-    const [, amountText, , payeeText, balanceText, dateText, timeText] = outflowMatch;
-
-    return {
-      kind: 'outflow',
-      amountCents: parseDecimalMoneyToCents(amountText),
-      occurredAt: normalizeSmsOccurredAt(dateText, timeText),
-      balanceAfterCents: parseDecimalMoneyToCents(balanceText),
-      payee: normalizeOptionalText(payeeText),
-      memo: 'Imported from debug SMS',
-    };
+  const fields = extractOtpSmsFields(body);
+  if (!fields) {
+    return null;
   }
 
-  const inflowMatch = trimmed.match(
-    /^BANK:\s*Incoming transfer\s+([0-9][\d.,]*)\s+([A-Z]{3})\s+from\s+(.+?)\.\s+Balance\s+([0-9][\d.,]*)\s+\2\.\s+Date\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\.$/i
-  );
+  return {
+    kind: fields.kind,
+    amountCents: parseDecimalMoneyToCents(fields.amountText),
+    occurredAt: normalizeSmsOccurredAt(fields.dateText, fields.timeText),
+    balanceAfterCents: parseDecimalMoneyToCents(fields.balanceText),
+    payee: null,
+    memo: 'Imported from OTP banka SMS',
+  };
+}
 
-  if (inflowMatch) {
-    const [, amountText, , payeeText, balanceText, dateText, timeText] = inflowMatch;
+function extractOtpSmsFields(body: string) {
+  const normalizedLines = body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 
-    return {
-      kind: 'inflow',
-      amountCents: parseDecimalMoneyToCents(amountText),
-      occurredAt: normalizeSmsOccurredAt(dateText, timeText),
-      balanceAfterCents: parseDecimalMoneyToCents(balanceText),
-      payee: normalizeOptionalText(payeeText),
-      memo: 'Imported from debug SMS',
-    };
+  const dateTimeLine = normalizedLines.find((line) => line.startsWith('Datum:'));
+  const amountLine = normalizedLines.find((line) => line.startsWith('Priliv:') || line.startsWith('Odliv:'));
+  const balanceLine = normalizedLines.find((line) => line.startsWith('Raspoloziva sredstva:'));
+
+  if (!dateTimeLine || !amountLine || !balanceLine) {
+    return null;
   }
 
-  return null;
+  const dateTimeMatch = dateTimeLine.match(/^Datum:\s*(\d{2}\.\d{2}\.\d{4}),\s*Vreme:\s*(\d{2}:\d{2}:\d{2})$/i);
+  const amountMatch = amountLine.match(/^(Priliv|Odliv):\s*([0-9][\d.,]*)\s+RSD$/i);
+  const balanceMatch = balanceLine.match(/^Raspoloziva sredstva:\s*([0-9][\d.,]*)\s+RSD$/i);
+
+  if (!dateTimeMatch || !amountMatch || !balanceMatch) {
+    return null;
+  }
+
+  return {
+    dateText: dateTimeMatch[1],
+    timeText: dateTimeMatch[2],
+    kind: amountMatch[1].toLowerCase() === 'priliv' ? ('inflow' as const) : ('outflow' as const),
+    amountText: amountMatch[2],
+    balanceText: balanceMatch[1],
+  };
 }
 
 function normalizeSmsOccurredAt(dateText: string, timeText: string) {
-  const occurredAt = new Date(`${dateText}T${timeText}:00.000Z`);
+  const [dayText, monthText, yearText] = dateText.split('.');
+  const [hourText, minuteText, secondText] = timeText.split(':');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
 
-  if (Number.isNaN(occurredAt.getTime())) {
+  const occurredAt = new Date(year, month - 1, day, hour, minute, second, 0);
+
+  if (
+    Number.isNaN(occurredAt.getTime()) ||
+    occurredAt.getFullYear() !== year ||
+    occurredAt.getMonth() !== month - 1 ||
+    occurredAt.getDate() !== day ||
+    occurredAt.getHours() !== hour ||
+    occurredAt.getMinutes() !== minute ||
+    occurredAt.getSeconds() !== second
+  ) {
     throw new Error('Debug SMS contains an invalid occurred-at timestamp.');
   }
 
   return occurredAt.toISOString();
 }
 
-function normalizeOptionalText(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
-}
