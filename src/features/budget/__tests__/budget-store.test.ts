@@ -345,8 +345,13 @@ describe('budget store bootstrap', () => {
     expect(importedView.authoritativeBalanceCents).toBe(452_755);
     expect(importedView.readyToAssignCents).toBe(125_500);
     const expectedOccurredAt = new Date(2026, 5, 30, 3, 24, 4, 0).toISOString();
-    expect(importResult.parseResult.status).toBe('parsed');
+    expect(importResult.parseResult?.status).toBe('parsed');
     expect(importResult.transaction?.status).toBe('needs_review');
+    expect(importResult.importOutcome).toMatchObject({
+      kind: 'needs_review',
+      reason: 'parsed_ok',
+      candidateTransactionId: importResult.transaction?.id,
+    });
 
     const inboxTransactions = await store.getInboxTransactions();
     expect(inboxTransactions).toHaveLength(1);
@@ -392,6 +397,16 @@ describe('budget store bootstrap', () => {
       balanceAfterCents: 452_755,
       payee: null,
     });
+
+    const importOutcomes = await store.getImportOutcomes();
+    expect(importOutcomes).toHaveLength(1);
+    expect(importOutcomes[0]).toMatchObject({
+      rawSmsMessageId: rawSmsMessages[0].id,
+      parseResultId: parseResults[0].id,
+      kind: 'needs_review',
+      candidateTransactionId: inboxTransactions[0].id,
+      reason: 'parsed_ok',
+    });
   });
 
   it('persists raw SMS and an unparseable parse result when parsing throws', async () => {
@@ -430,8 +445,13 @@ describe('budget store bootstrap', () => {
     const importedView = importResult.budgetView;
     expect(importedView.authoritativeBalanceCents).toBe(125_500);
     expect(importedView.readyToAssignCents).toBe(125_500);
-    expect(importResult.parseResult.status).toBe('unparseable');
+    expect(importResult.parseResult?.status).toBe('unparseable');
     expect(importResult.transaction).toBeNull();
+    expect(importResult.importOutcome).toMatchObject({
+      kind: 'manual_import',
+      reason: 'unparseable',
+      candidateTransactionId: null,
+    });
 
     expect(await store.getInboxTransactions()).toEqual([]);
 
@@ -465,6 +485,16 @@ describe('budget store bootstrap', () => {
       balanceAfterCents: null,
     });
     expect(parseResults[0].memo).toMatch(/invalid occurred-at timestamp/i);
+
+    const importOutcomes = await store.getImportOutcomes();
+    expect(importOutcomes).toHaveLength(1);
+    expect(importOutcomes[0]).toMatchObject({
+      rawSmsMessageId: rawSmsMessages[0].id,
+      parseResultId: parseResults[0].id,
+      kind: 'manual_import',
+      candidateTransactionId: null,
+      reason: 'unparseable',
+    });
   });
 
   it('rejects invalid approved manual transaction category invariants', async () => {
@@ -912,6 +942,7 @@ describe('budget engine month math', () => {
         assignmentEvents: [],
         rawSmsMessages: [],
         smsParseResults: [],
+        importOutcomes: [],
       },
       new Date('2026-06-24T10:00:00.000Z')
     );
@@ -988,6 +1019,7 @@ describe('budget engine month math', () => {
         ],
         rawSmsMessages: [],
         smsParseResults: [],
+        importOutcomes: [],
       },
       new Date('2026-06-24T10:00:00.000Z')
     );
@@ -1041,6 +1073,7 @@ describe('budget engine month math', () => {
         assignmentEvents: [],
         rawSmsMessages: [],
         smsParseResults: [],
+        importOutcomes: [],
       },
       new Date('2026-06-25T12:00:00.000Z')
     );

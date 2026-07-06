@@ -67,6 +67,24 @@ export type SmsParseResult = {
   createdAt: string;
 };
 
+export type ImportOutcomeKind = 'needs_review' | 'manual_import' | 'possible_duplicate' | 'ignored';
+export type ImportOutcomeReason =
+  | 'parsed_ok'
+  | 'unparseable'
+  | 'possible_duplicate'
+  | 'sender_not_allowed'
+  | 'before_tracking_cutover';
+
+export type ImportOutcome = {
+  id: string;
+  rawSmsMessageId: string;
+  parseResultId: string | null;
+  kind: ImportOutcomeKind;
+  candidateTransactionId: string | null;
+  reason: ImportOutcomeReason;
+  createdAt: string;
+};
+
 export type AssignmentEvent = {
   id: string;
   categoryId: string;
@@ -83,6 +101,7 @@ export type BudgetSnapshot = {
   assignmentEvents: AssignmentEvent[];
   rawSmsMessages: RawSmsMessage[];
   smsParseResults: SmsParseResult[];
+  importOutcomes: ImportOutcome[];
 };
 
 export type OnboardingCategoryGroupInput = {

@@ -1,12 +1,11 @@
 import { deriveBudgetView, toMonthKey } from './budget-engine';
+import { orchestrateSmsImport } from './import-orchestration';
 import { assertValidCurrencyCode } from './money';
-import { DEBUG_BANK_SMS_PARSER_ID, DEBUG_BANK_SMS_PARSER_VERSION, parseDebugBankSms } from './sms-import';
 import type {
   BudgetSnapshot,
   BudgetView,
   CompleteOnboardingInput,
-  RawSmsMessage,
-  SmsParseResult,
+  ImportOutcome,
 } from './types';
 
 export type BudgetStorage = {
@@ -46,8 +45,9 @@ export type DebugSmsImportInput = {
 
 export type DebugSmsImportResult = {
   budgetView: BudgetView;
-  parseResult: SmsParseResult;
+  parseResult: BudgetSnapshot['smsParseResults'][number] | null;
   transaction: BudgetSnapshot['transactions'][number] | null;
+  importOutcome: ImportOutcome;
 };
 
 export type BudgetStore = {
@@ -56,6 +56,7 @@ export type BudgetStore = {
   getInboxTransactions(): Promise<BudgetSnapshot['transactions']>;
   getRawSmsMessages(): Promise<BudgetSnapshot['rawSmsMessages']>;
   getSmsParseResults(): Promise<BudgetSnapshot['smsParseResults']>;
+  getImportOutcomes(): Promise<BudgetSnapshot['importOutcomes']>;
   completeOnboarding(input: CompleteOnboardingInput, now?: Date): Promise<BudgetView>;
   assignMoneyToCategory(input: AssignMoneyToCategoryInput, now?: Date): Promise<BudgetView>;
   moveMoneyBetweenCategories(input: MoveMoneyBetweenCategoriesInput, now?: Date): Promise<BudgetView>;
@@ -72,6 +73,7 @@ const EMPTY_SNAPSHOT: BudgetSnapshot = {
   assignmentEvents: [],
   rawSmsMessages: [],
   smsParseResults: [],
+  importOutcomes: [],
 };
 
 export function createBudgetStore(storage: BudgetStorage): BudgetStore {
@@ -130,6 +132,13 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
       const snapshot = await storage.readSnapshot();
 
       return [...snapshot.smsParseResults].sort(compareSmsParseResultsNewestFirst);
+    },
+
+    async getImportOutcomes() {
+      await waitForPendingMutations();
+      const snapshot = await storage.readSnapshot();
+
+      return [...snapshot.importOutcomes].sort(compareImportOutcomesNewestFirst);
     },
 
     async completeOnboarding(input, now = new Date()) {
@@ -193,6 +202,7 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
           assignmentEvents: [],
           rawSmsMessages: [],
           smsParseResults: [],
+          importOutcomes: [],
         };
 
         await storage.writeSnapshot(nextSnapshot);
@@ -336,72 +346,37 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
         assertBudgetExists(snapshot);
-
-        const normalized = normalizeDebugSmsImportInput(input);
         const createdAt = now.toISOString();
-        const rawSmsMessage = {
-          id: createRawSmsMessageId(snapshot),
-          sender: normalized.sender,
-          body: normalized.body,
-          receivedAt: normalized.receivedAt,
+        const importResult = orchestrateSmsImport({
+          snapshot,
+          sms: input,
           createdAt,
-        } satisfies RawSmsMessage;
-
-        let parsedSms: ReturnType<typeof parseDebugBankSms> = null;
-        let parseFailureMessage: string | null = null;
-
-        try {
-          parsedSms = parseDebugBankSms(normalized.body);
-        } catch (error) {
-          parseFailureMessage = getErrorMessage(error);
-        }
-
-        const transaction =
-          parsedSms === null
-            ? null
-            : {
-                id: createTransactionId(snapshot),
-                accountId: snapshot.account.id,
-                source: 'sms' as const,
-                kind: parsedSms.kind,
-                status: 'needs_review' as const,
-                amountCents: parsedSms.kind === 'outflow' ? -parsedSms.amountCents : parsedSms.amountCents,
-                occurredAt: parsedSms.occurredAt,
-                categoryId: null,
-                balanceAfterCents: parsedSms.balanceAfterCents,
-                payee: parsedSms.payee,
-                memo: parsedSms.memo,
-                createdAt,
-              };
-
-        const smsParseResult = {
-          id: createSmsParseResultId(snapshot),
-          rawSmsMessageId: rawSmsMessage.id,
-          parserId: DEBUG_BANK_SMS_PARSER_ID,
-          parserVersion: DEBUG_BANK_SMS_PARSER_VERSION,
-          status: parsedSms ? 'parsed' : 'unparseable',
-          transactionId: transaction?.id ?? null,
-          kind: transaction?.kind ?? null,
-          amountCents: transaction?.amountCents ?? null,
-          occurredAt: transaction?.occurredAt ?? null,
-          balanceAfterCents: transaction?.balanceAfterCents ?? null,
-          payee: transaction?.payee ?? null,
-          memo: transaction?.memo ?? parseFailureMessage,
-          createdAt,
-        } satisfies SmsParseResult;
+          ids: {
+            rawSmsMessageId: createRawSmsMessageId(snapshot),
+            parseResultId: createSmsParseResultId(snapshot),
+            transactionId: createTransactionId(snapshot),
+            importOutcomeId: createImportOutcomeId(snapshot),
+          },
+        });
 
         const nextSnapshot: BudgetSnapshot = {
           ...snapshot,
-          transactions: transaction ? [...snapshot.transactions, transaction] : snapshot.transactions,
-          rawSmsMessages: [...snapshot.rawSmsMessages, rawSmsMessage],
-          smsParseResults: [...snapshot.smsParseResults, smsParseResult],
+          transactions: importResult.candidateTransaction
+            ? [...snapshot.transactions, importResult.candidateTransaction]
+            : snapshot.transactions,
+          rawSmsMessages: [...snapshot.rawSmsMessages, importResult.rawSmsMessage],
+          smsParseResults: importResult.parseResult
+            ? [...snapshot.smsParseResults, importResult.parseResult]
+            : snapshot.smsParseResults,
+          importOutcomes: [...snapshot.importOutcomes, importResult.importOutcome],
         };
 
         await storage.writeSnapshot(nextSnapshot);
         return {
           budgetView: deriveBudgetView(nextSnapshot, now),
-          parseResult: smsParseResult,
-          transaction,
+          parseResult: importResult.parseResult,
+          transaction: importResult.candidateTransaction,
+          importOutcome: importResult.importOutcome,
         };
       });
     },
@@ -514,6 +489,10 @@ function createSmsParseResultId(snapshot: BudgetSnapshot) {
   return `sms-parse-${snapshot.smsParseResults.length + 1}`;
 }
 
+function createImportOutcomeId(snapshot: BudgetSnapshot) {
+  return `import-outcome-${snapshot.importOutcomes.length + 1}`;
+}
+
 function normalizeManualTransactionInput(
   snapshot: BudgetSnapshot,
   input: ManualTransactionInput
@@ -569,37 +548,9 @@ function normalizeOccurredAt(value: string) {
   return occurredAt.toISOString();
 }
 
-function normalizeDebugSmsImportInput(input: DebugSmsImportInput): DebugSmsImportInput {
-  const sender = input.sender.trim();
-  const body = input.body.trim();
-  const receivedAt = normalizeOccurredAt(input.receivedAt);
-
-  if (!sender) {
-    throw new Error('SMS sender is required.');
-  }
-
-  if (!body) {
-    throw new Error('SMS body is required.');
-  }
-
-  return {
-    sender,
-    body,
-    receivedAt,
-  };
-}
-
 function normalizeOptionalText(value: string | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return 'Unknown parser error.';
 }
 
 function assertEditableManualTransaction(transaction: BudgetSnapshot['transactions'][number]) {
@@ -639,6 +590,13 @@ function compareSmsParseResultsNewestFirst(
   return right.createdAt.localeCompare(left.createdAt);
 }
 
+function compareImportOutcomesNewestFirst(
+  left: BudgetSnapshot['importOutcomes'][number],
+  right: BudgetSnapshot['importOutcomes'][number]
+) {
+  return right.createdAt.localeCompare(left.createdAt);
+}
+
 function cloneSnapshot(snapshot: BudgetSnapshot): BudgetSnapshot {
   return {
     account: snapshot.account ? { ...snapshot.account } : null,
@@ -648,5 +606,6 @@ function cloneSnapshot(snapshot: BudgetSnapshot): BudgetSnapshot {
     assignmentEvents: snapshot.assignmentEvents.map((event) => ({ ...event })),
     rawSmsMessages: (snapshot.rawSmsMessages ?? []).map((message) => ({ ...message })),
     smsParseResults: (snapshot.smsParseResults ?? []).map((result) => ({ ...result })),
+    importOutcomes: (snapshot.importOutcomes ?? []).map((outcome) => ({ ...outcome })),
   };
 }

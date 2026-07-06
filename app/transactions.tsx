@@ -3,7 +3,7 @@ import { Text } from '@/components/ui/text';
 import { budgetStore } from '@/src/features/budget/app-store';
 import { toLocalDateKey, toMonthKey } from '@/src/features/budget/budget-engine';
 import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
-import type { BudgetView, CanonicalTransaction } from '@/src/features/budget/types';
+import type { BudgetView, CanonicalTransaction, ImportOutcome } from '@/src/features/budget/types';
 import { router, Stack } from 'expo-router';
 import * as React from 'react';
 import { ActivityIndicator, Alert, ScrollView, TextInput, View } from 'react-native';
@@ -30,6 +30,7 @@ export default function TransactionsScreen() {
   const [budgetView, setBudgetView] = React.useState<BudgetView | null>(null);
   const [transactions, setTransactions] = React.useState<CanonicalTransaction[]>([]);
   const [inboxTransactions, setInboxTransactions] = React.useState<CanonicalTransaction[]>([]);
+  const [importOutcomes, setImportOutcomes] = React.useState<ImportOutcome[]>([]);
   const [draft, setDraft] = React.useState<TransactionDraft>(() => createEmptyDraft());
   const [debugSmsSender, setDebugSmsSender] = React.useState('BANK');
   const [debugSmsBody, setDebugSmsBody] = React.useState(createSampleDebugSmsBody);
@@ -56,6 +57,37 @@ export default function TransactionsScreen() {
   const manualTransactions = React.useMemo(
     () => transactions.filter((transaction) => transaction.source === 'manual'),
     [transactions]
+  );
+
+  const importOutcomeByTransactionId = React.useMemo(() => {
+    return new Map(
+      importOutcomes
+        .filter((outcome) => outcome.candidateTransactionId !== null)
+        .map((outcome) => [outcome.candidateTransactionId as string, outcome])
+    );
+  }, [importOutcomes]);
+
+  const needsReviewTransactions = React.useMemo(
+    () =>
+      inboxTransactions.filter((transaction) => {
+        const outcome = importOutcomeByTransactionId.get(transaction.id);
+        return outcome?.kind !== 'possible_duplicate';
+      }),
+    [importOutcomeByTransactionId, inboxTransactions]
+  );
+
+  const duplicateTransactions = React.useMemo(
+    () =>
+      inboxTransactions.filter((transaction) => {
+        const outcome = importOutcomeByTransactionId.get(transaction.id);
+        return outcome?.kind === 'possible_duplicate';
+      }),
+    [importOutcomeByTransactionId, inboxTransactions]
+  );
+
+  const manualImportOutcomes = React.useMemo(
+    () => importOutcomes.filter((outcome) => outcome.kind === 'manual_import'),
+    [importOutcomes]
   );
 
   React.useEffect(() => {
@@ -85,15 +117,17 @@ export default function TransactionsScreen() {
     setLoadError(null);
 
     try {
-      const [nextBudgetView, nextTransactions, nextInboxTransactions] = await Promise.all([
+      const [nextBudgetView, nextTransactions, nextInboxTransactions, nextImportOutcomes] = await Promise.all([
         budgetStore.getCurrentBudgetView(new Date()),
         budgetStore.getTransactions(),
         budgetStore.getInboxTransactions(),
+        budgetStore.getImportOutcomes(),
       ]);
 
       setBudgetView(nextBudgetView);
       setTransactions(nextTransactions);
       setInboxTransactions(nextInboxTransactions);
+      setImportOutcomes(nextImportOutcomes);
     } catch (error) {
       setLoadError(getErrorMessage(error));
     } finally {
@@ -153,20 +187,39 @@ export default function TransactionsScreen() {
         },
         new Date()
       );
-      const [nextTransactions, nextInboxTransactions] = await Promise.all([
+      const [nextTransactions, nextInboxTransactions, nextImportOutcomes] = await Promise.all([
         budgetStore.getTransactions(),
         budgetStore.getInboxTransactions(),
+        budgetStore.getImportOutcomes(),
       ]);
 
       setBudgetView(importResult.budgetView);
       setTransactions(nextTransactions);
       setInboxTransactions(nextInboxTransactions);
+      setImportOutcomes(nextImportOutcomes);
 
-      if (importResult.parseResult.status === 'unparseable') {
-        const message = importResult.parseResult.memo ?? 'SMS was saved, but parsing failed.';
+      if (importResult.importOutcome.kind === 'ignored') {
+        const message =
+          importResult.importOutcome.reason === 'sender_not_allowed'
+            ? 'SMS sender is not on the allowlist.'
+            : 'SMS happened before tracking started and was ignored.';
+        setSmsImportError(message);
+        Alert.alert('SMS ignored', message);
+        return;
+      }
+
+      if (importResult.importOutcome.kind === 'manual_import') {
+        const message = importResult.parseResult?.memo ?? 'SMS was saved, but parsing failed.';
         setSmsImportError(message);
         Alert.alert('SMS saved but not parsed', message);
         return;
+      }
+
+      if (importResult.importOutcome.kind === 'possible_duplicate') {
+        Alert.alert(
+          'SMS flagged as possible duplicate',
+          'The SMS was imported as a review candidate and flagged as a possible duplicate.'
+        );
       }
 
       setDebugSmsBody(createSampleDebugSmsBody());
@@ -438,15 +491,15 @@ export default function TransactionsScreen() {
           </View>
 
           <View className="gap-3">
-            <Text variant="large">Inbox candidates</Text>
-            {inboxTransactions.length === 0 ? (
+            <Text variant="large">Needs review</Text>
+            {needsReviewTransactions.length === 0 ? (
               <View className="rounded-2xl border border-border bg-card p-4">
                 <Text className="text-muted-foreground">
                   No SMS candidates need review yet. Import a debug SMS above.
                 </Text>
               </View>
             ) : (
-              inboxTransactions.map((transaction) => (
+              needsReviewTransactions.map((transaction) => (
                 <View key={transaction.id} className="gap-3 rounded-2xl border border-border bg-card p-4">
                   <View className="flex-row items-start justify-between gap-3">
                     <View className="flex-1 gap-1">
@@ -478,6 +531,84 @@ export default function TransactionsScreen() {
                       This candidate updates the account header balance but does not touch category math until approval.
                     </Text>
                     {transaction.memo ? <Text className="text-sm text-muted-foreground">{transaction.memo}</Text> : null}
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+
+          <View className="gap-3">
+            <Text variant="large">Possible duplicates</Text>
+            {duplicateTransactions.length === 0 ? (
+              <View className="rounded-2xl border border-border bg-card p-4">
+                <Text className="text-muted-foreground">
+                  No duplicate-looking SMS imports right now.
+                </Text>
+              </View>
+            ) : (
+              duplicateTransactions.map((transaction) => (
+                <View key={transaction.id} className="gap-3 rounded-2xl border border-border bg-card p-4">
+                  <View className="flex-row items-start justify-between gap-3">
+                    <View className="flex-1 gap-1">
+                      <Text className="font-semibold">
+                        {transaction.payee ?? (transaction.kind === 'inflow' ? 'SMS inflow' : 'SMS outflow')}
+                      </Text>
+                      <Text className="text-sm text-muted-foreground">
+                        {toLocalDateKey(transaction.occurredAt)} · Review possible duplicate
+                      </Text>
+                    </View>
+                    <View className="items-end gap-1">
+                      <Text className={transaction.amountCents < 0 ? 'font-semibold text-destructive' : 'font-semibold'}>
+                        {formatCurrency(transaction.amountCents, budgetView.currencyCode)}
+                      </Text>
+                      <Text className="text-xs uppercase text-amber-600">Possible duplicate</Text>
+                    </View>
+                  </View>
+
+                  <View className="gap-1 rounded-xl bg-muted/40 p-3">
+                    <Text className="text-sm text-muted-foreground">
+                      Balance after import:{' '}
+                      <Text className="font-medium text-foreground">
+                        {transaction.balanceAfterCents === null
+                          ? 'Unknown'
+                          : formatCurrency(transaction.balanceAfterCents, budgetView.currencyCode)}
+                      </Text>
+                    </Text>
+                    <Text className="text-sm text-muted-foreground">
+                      This candidate updates the account header balance but was flagged as a possible duplicate.
+                    </Text>
+                    {transaction.memo ? <Text className="text-sm text-muted-foreground">{transaction.memo}</Text> : null}
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+
+          <View className="gap-3">
+            <Text variant="large">Needs manual import</Text>
+            {manualImportOutcomes.length === 0 ? (
+              <View className="rounded-2xl border border-border bg-card p-4">
+                <Text className="text-muted-foreground">
+                  No unparseable SMS imports waiting for manual recovery.
+                </Text>
+              </View>
+            ) : (
+              manualImportOutcomes.map((outcome) => (
+                <View key={outcome.id} className="gap-3 rounded-2xl border border-border bg-card p-4">
+                  <View className="flex-row items-start justify-between gap-3">
+                    <View className="flex-1 gap-1">
+                      <Text className="font-semibold">Manual import needed</Text>
+                      <Text className="text-sm text-muted-foreground">
+                        Parser could not turn this SMS into a canonical transaction.
+                      </Text>
+                    </View>
+                    <Text className="text-xs uppercase text-amber-600">Manual import</Text>
+                  </View>
+
+                  <View className="gap-1 rounded-xl bg-muted/40 p-3">
+                    <Text className="text-sm text-muted-foreground">
+                      Outcome reason: <Text className="font-medium text-foreground">{formatImportOutcomeReason(outcome.reason)}</Text>
+                    </Text>
                   </View>
                 </View>
               ))
@@ -657,4 +788,21 @@ function getErrorMessage(error: unknown) {
   }
 
   return 'Unknown error';
+}
+
+function formatImportOutcomeReason(reason: ImportOutcome['reason']) {
+  switch (reason) {
+    case 'unparseable':
+      return 'Parser could not understand the SMS';
+    case 'sender_not_allowed':
+      return 'Sender is not on the allowlist';
+    case 'before_tracking_cutover':
+      return 'Transaction happened before tracking started';
+    case 'possible_duplicate':
+      return 'Matched a duplicate heuristic';
+    case 'parsed_ok':
+      return 'Parsed successfully';
+    default:
+      return reason;
+  }
 }

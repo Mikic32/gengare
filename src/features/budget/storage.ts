@@ -9,6 +9,7 @@ import type {
   CanonicalTransaction,
   Category,
   CategoryGroup,
+  ImportOutcome,
   RawSmsMessage,
   SmsParseResult,
 } from './types';
@@ -87,6 +88,16 @@ type SmsParseResultRow = {
   created_at: string;
 };
 
+type ImportOutcomeRow = {
+  id: string;
+  raw_sms_message_id: string;
+  parse_result_id: string | null;
+  kind: ImportOutcome['kind'];
+  candidate_transaction_id: string | null;
+  reason: ImportOutcome['reason'];
+  created_at: string;
+};
+
 let databasePromise: Promise<SQLiteDatabase> | null = null;
 
 export function createAppBudgetStorage(): BudgetStorage {
@@ -122,6 +133,9 @@ function createSQLiteBudgetStorage(): BudgetStorage {
       const smsParseResultRows = await db.getAllAsync<SmsParseResultRow>(
         'SELECT id, raw_sms_message_id, parser_id, parser_version, status, transaction_id, kind, amount_cents, occurred_at, balance_after_cents, payee, memo, created_at FROM sms_parse_results ORDER BY created_at ASC'
       );
+      const importOutcomeRows = await db.getAllAsync<ImportOutcomeRow>(
+        'SELECT id, raw_sms_message_id, parse_result_id, kind, candidate_transaction_id, reason, created_at FROM import_outcomes ORDER BY created_at ASC'
+      );
 
       return {
         account: accountRow ? mapAccountRow(accountRow) : null,
@@ -131,6 +145,7 @@ function createSQLiteBudgetStorage(): BudgetStorage {
         assignmentEvents: assignmentEventRows.map(mapAssignmentEventRow),
         rawSmsMessages: rawSmsMessageRows.map(mapRawSmsMessageRow),
         smsParseResults: smsParseResultRows.map(mapSmsParseResultRow),
+        importOutcomes: importOutcomeRows.map(mapImportOutcomeRow),
       };
     },
 
@@ -139,6 +154,7 @@ function createSQLiteBudgetStorage(): BudgetStorage {
       await ensureSchema(db);
       await db.withTransactionAsync(async () => {
         await db.execAsync(`
+          DELETE FROM import_outcomes;
           DELETE FROM sms_parse_results;
           DELETE FROM raw_sms_messages;
           DELETE FROM assignment_events;
@@ -224,6 +240,19 @@ function createSQLiteBudgetStorage(): BudgetStorage {
             smsParseResult.payee,
             smsParseResult.memo,
             smsParseResult.createdAt
+          );
+        }
+
+        for (const importOutcome of snapshot.importOutcomes) {
+          await db.runAsync(
+            'INSERT INTO import_outcomes (id, raw_sms_message_id, parse_result_id, kind, candidate_transaction_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            importOutcome.id,
+            importOutcome.rawSmsMessageId,
+            importOutcome.parseResultId,
+            importOutcome.kind,
+            importOutcome.candidateTransactionId,
+            importOutcome.reason,
+            importOutcome.createdAt
           );
         }
 
@@ -353,6 +382,19 @@ async function ensureSchema(db: SQLiteDatabase) {
       FOREIGN KEY (raw_sms_message_id) REFERENCES raw_sms_messages (id) ON DELETE CASCADE,
       FOREIGN KEY (transaction_id) REFERENCES transactions (id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS import_outcomes (
+      id TEXT PRIMARY KEY NOT NULL,
+      raw_sms_message_id TEXT NOT NULL,
+      parse_result_id TEXT,
+      kind TEXT NOT NULL,
+      candidate_transaction_id TEXT,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (raw_sms_message_id) REFERENCES raw_sms_messages (id) ON DELETE CASCADE,
+      FOREIGN KEY (parse_result_id) REFERENCES sms_parse_results (id) ON DELETE SET NULL,
+      FOREIGN KEY (candidate_transaction_id) REFERENCES transactions (id) ON DELETE SET NULL
+    );
   `);
 }
 
@@ -439,6 +481,18 @@ function mapSmsParseResultRow(row: SmsParseResultRow): SmsParseResult {
   };
 }
 
+function mapImportOutcomeRow(row: ImportOutcomeRow): ImportOutcome {
+  return {
+    id: row.id,
+    rawSmsMessageId: row.raw_sms_message_id,
+    parseResultId: row.parse_result_id,
+    kind: row.kind,
+    candidateTransactionId: row.candidate_transaction_id,
+    reason: row.reason,
+    createdAt: row.created_at,
+  };
+}
+
 function emptySnapshot(): BudgetSnapshot {
   return {
     account: null,
@@ -448,6 +502,7 @@ function emptySnapshot(): BudgetSnapshot {
     assignmentEvents: [],
     rawSmsMessages: [],
     smsParseResults: [],
+    importOutcomes: [],
   };
 }
 
@@ -460,5 +515,6 @@ function normalizeSnapshot(snapshot: Partial<BudgetSnapshot>): BudgetSnapshot {
     assignmentEvents: snapshot.assignmentEvents ?? [],
     rawSmsMessages: snapshot.rawSmsMessages ?? [],
     smsParseResults: snapshot.smsParseResults ?? [],
+    importOutcomes: snapshot.importOutcomes ?? [],
   };
 }
