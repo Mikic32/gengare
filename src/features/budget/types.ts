@@ -116,6 +116,19 @@ export type CompleteOnboardingInput = {
   categoryGroups: OnboardingCategoryGroupInput[];
 };
 
+export type ManualTransactionInput = {
+  kind: 'inflow' | 'outflow';
+  amountCents: number;
+  occurredAt: string;
+  categoryId: string | null;
+  payee: string | null;
+  memo: string | null;
+};
+
+export type UpdateManualTransactionInput = ManualTransactionInput & {
+  transactionId: string;
+};
+
 export type BudgetCategoryView = {
   id: string;
   name: string;

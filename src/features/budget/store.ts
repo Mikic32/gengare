@@ -1,11 +1,14 @@
 import { deriveBudgetView, toMonthKey } from './budget-engine';
 import { orchestrateSmsImport } from './import-orchestration';
-import { assertValidCurrencyCode } from './money';
+import { applyCreateManualTransaction, applyUpdateManualTransaction } from './manual-transactions';
+import { applyCompleteOnboarding } from './onboarding';
 import type {
   BudgetSnapshot,
   BudgetView,
   CompleteOnboardingInput,
   ImportOutcome,
+  ManualTransactionInput,
+  UpdateManualTransactionInput,
 } from './types';
 
 export type BudgetStorage = {
@@ -22,19 +25,6 @@ export type MoveMoneyBetweenCategoriesInput = {
   fromCategoryId: string;
   toCategoryId: string;
   amountCents: number;
-};
-
-export type ManualTransactionInput = {
-  kind: 'inflow' | 'outflow';
-  amountCents: number;
-  occurredAt: string;
-  categoryId: string | null;
-  payee: string | null;
-  memo: string | null;
-};
-
-export type UpdateManualTransactionInput = ManualTransactionInput & {
-  transactionId: string;
 };
 
 export type DebugSmsImportInput = {
@@ -144,67 +134,7 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
     async completeOnboarding(input, now = new Date()) {
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
-        if (snapshot.account) {
-          throw new Error('Onboarding has already been completed for this device.');
-        }
-
-        const normalized = normalizeOnboardingInput(input);
-        const createdAt = now.toISOString();
-        let nextId = 1;
-        const createId = (prefix: string) => `${prefix}-${nextId++}`;
-
-        const account = {
-          id: createId('account'),
-          name: normalized.accountName,
-          currencyCode: normalized.currencyCode,
-          createdAt,
-        };
-
-        const categoryGroups = normalized.categoryGroups.map((group, groupIndex) => ({
-          id: createId('group'),
-          name: group.name,
-          sortOrder: groupIndex,
-          createdAt,
-        }));
-
-        const categories = normalized.categoryGroups.flatMap((group, groupIndex) => {
-          const parentGroup = categoryGroups[groupIndex];
-
-          return group.categories.map((categoryName, categoryIndex) => ({
-            id: createId('category'),
-            groupId: parentGroup.id,
-            name: categoryName,
-            sortOrder: categoryIndex,
-            createdAt,
-          }));
-        });
-
-        const startingBalanceTransaction = {
-          id: createId('transaction'),
-          accountId: account.id,
-          source: 'starting_balance' as const,
-          kind: 'inflow' as const,
-          status: 'approved' as const,
-          amountCents: normalized.startingBalanceCents,
-          occurredAt: createdAt,
-          categoryId: null,
-          balanceAfterCents: normalized.startingBalanceCents,
-          payee: null,
-          memo: 'Starting balance',
-          createdAt,
-        };
-
-        const nextSnapshot: BudgetSnapshot = {
-          account,
-          categoryGroups,
-          categories,
-          transactions: [startingBalanceTransaction],
-          assignmentEvents: [],
-          rawSmsMessages: [],
-          smsParseResults: [],
-          importOutcomes: [],
-        };
-
+        const nextSnapshot = applyCompleteOnboarding(snapshot, input, now);
         await storage.writeSnapshot(nextSnapshot);
         return deriveBudgetView(nextSnapshot, now);
       });
@@ -275,29 +205,7 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
     async createManualTransaction(input, now = new Date()) {
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
-        assertBudgetExists(snapshot);
-
-        const normalized = normalizeManualTransactionInput(snapshot, input);
-        const nextTransaction = {
-          id: createTransactionId(snapshot),
-          accountId: snapshot.account.id,
-          source: 'manual' as const,
-          kind: normalized.kind,
-          status: 'approved' as const,
-          amountCents: normalized.kind === 'outflow' ? -normalized.amountCents : normalized.amountCents,
-          occurredAt: normalized.occurredAt,
-          categoryId: normalized.categoryId,
-          balanceAfterCents: null,
-          payee: normalized.payee,
-          memo: normalized.memo,
-          createdAt: now.toISOString(),
-        };
-
-        const nextSnapshot: BudgetSnapshot = {
-          ...snapshot,
-          transactions: [...snapshot.transactions, nextTransaction],
-        };
-
+        const nextSnapshot = applyCreateManualTransaction(snapshot, input, now);
         await storage.writeSnapshot(nextSnapshot);
         return deriveBudgetView(nextSnapshot, now);
       });
@@ -306,37 +214,7 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
     async updateManualTransaction(input, now = new Date()) {
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
-        assertBudgetExists(snapshot);
-
-        const transactionIndex = snapshot.transactions.findIndex(
-          (transaction) => transaction.id === input.transactionId
-        );
-
-        if (transactionIndex < 0) {
-          throw new Error('Transaction does not exist.');
-        }
-
-        const existingTransaction = snapshot.transactions[transactionIndex];
-        assertEditableManualTransaction(existingTransaction);
-
-        const normalized = normalizeManualTransactionInput(snapshot, input);
-        const nextTransaction = {
-          ...existingTransaction,
-          kind: normalized.kind,
-          amountCents: normalized.kind === 'outflow' ? -normalized.amountCents : normalized.amountCents,
-          occurredAt: normalized.occurredAt,
-          categoryId: normalized.categoryId,
-          payee: normalized.payee,
-          memo: normalized.memo,
-        };
-
-        const nextSnapshot: BudgetSnapshot = {
-          ...snapshot,
-          transactions: snapshot.transactions.map((transaction, index) =>
-            index === transactionIndex ? nextTransaction : transaction
-          ),
-        };
-
+        const nextSnapshot = applyUpdateManualTransaction(snapshot, input);
         await storage.writeSnapshot(nextSnapshot);
         return deriveBudgetView(nextSnapshot, now);
       });
@@ -394,36 +272,6 @@ export function createMemoryBudgetStorage(initialSnapshot: BudgetSnapshot = EMPT
     async writeSnapshot(nextSnapshot) {
       snapshot = cloneSnapshot(nextSnapshot);
     },
-  };
-}
-
-function normalizeOnboardingInput(input: CompleteOnboardingInput): CompleteOnboardingInput {
-  const accountName = input.accountName.trim();
-  const currencyCode = assertValidCurrencyCode(input.currencyCode);
-  const categoryGroups = input.categoryGroups
-    .map((group) => ({
-      name: group.name.trim(),
-      categories: group.categories.map((category) => category.trim()).filter(Boolean),
-    }))
-    .filter((group) => group.name && group.categories.length > 0);
-
-  if (!accountName) {
-    throw new Error('Account name is required.');
-  }
-
-  if (!Number.isInteger(input.startingBalanceCents) || input.startingBalanceCents < 0) {
-    throw new Error('Starting balance must be a whole number of cents and cannot be negative.');
-  }
-
-  if (categoryGroups.length === 0) {
-    throw new Error('Create at least one category group with one category.');
-  }
-
-  return {
-    accountName,
-    currencyCode,
-    startingBalanceCents: input.startingBalanceCents,
-    categoryGroups,
   };
 }
 
@@ -491,72 +339,6 @@ function createSmsParseResultId(snapshot: BudgetSnapshot) {
 
 function createImportOutcomeId(snapshot: BudgetSnapshot) {
   return `import-outcome-${snapshot.importOutcomes.length + 1}`;
-}
-
-function normalizeManualTransactionInput(
-  snapshot: BudgetSnapshot,
-  input: ManualTransactionInput
-): ManualTransactionInput {
-  assertPositiveWholeNumberOfCents(input.amountCents, 'Transaction amount');
-
-  const occurredAt = normalizeOccurredAt(input.occurredAt);
-  const payee = normalizeOptionalText(input.payee);
-  const memo = normalizeOptionalText(input.memo);
-
-  if (input.kind === 'outflow') {
-    if (!input.categoryId) {
-      throw new Error('Approved manual outflows require a category.');
-    }
-
-    assertCategoryExists(snapshot, input.categoryId);
-
-    return {
-      ...input,
-      occurredAt,
-      categoryId: input.categoryId,
-      payee,
-      memo,
-    };
-  }
-
-  if (input.categoryId) {
-    throw new Error('Approved manual inflows must not have a category.');
-  }
-
-  return {
-    ...input,
-    occurredAt,
-    categoryId: null,
-    payee,
-    memo,
-  };
-}
-
-function assertPositiveWholeNumberOfCents(amountCents: number, label: string) {
-  if (!Number.isInteger(amountCents) || amountCents <= 0) {
-    throw new Error(`${label} must be a positive whole number of cents.`);
-  }
-}
-
-function normalizeOccurredAt(value: string) {
-  const occurredAt = new Date(value);
-
-  if (Number.isNaN(occurredAt.getTime())) {
-    throw new Error('Occurred at must be a valid date.');
-  }
-
-  return occurredAt.toISOString();
-}
-
-function normalizeOptionalText(value: string | null) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
-}
-
-function assertEditableManualTransaction(transaction: BudgetSnapshot['transactions'][number]) {
-  if (transaction.source !== 'manual' || transaction.status !== 'approved') {
-    throw new Error('Only approved manual transactions can be edited.');
-  }
 }
 
 function compareTransactionsNewestFirst(
