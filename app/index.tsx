@@ -2,7 +2,9 @@ import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
 import { DEFAULT_CATEGORY_GROUPS } from '@/src/features/budget/defaults';
 import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
-import { budgetStore } from '@/src/features/budget/app-store';
+import { BudgetStatCard, FormField } from '@/src/features/budget/app-components';
+import { getErrorMessage, parseRequiredPositiveAmountToCents } from '@/src/features/budget/app-helpers';
+import { budgetAppStore } from '@/src/features/budget/app-store';
 import type { BudgetView, CompleteOnboardingInput } from '@/src/features/budget/types';
 import { router, Stack } from 'expo-router';
 import * as React from 'react';
@@ -51,7 +53,7 @@ export default function Screen() {
     setLoadError(null);
 
     try {
-      const nextView = await budgetStore.getCurrentBudgetView(new Date());
+      const nextView = await budgetAppStore.getBudgetView(new Date());
       setBudgetView(nextView);
     } catch (loadError) {
       setLoadError(getErrorMessage(loadError));
@@ -65,7 +67,7 @@ export default function Screen() {
     setSubmitError(null);
 
     try {
-      const nextView = await budgetStore.completeOnboarding(
+      const nextView = await budgetAppStore.completeOnboarding(
         {
           accountName,
           currencyCode,
@@ -311,10 +313,10 @@ function BudgetScreen({
     setActionError(null);
 
     try {
-      const nextView = await budgetStore.assignMoneyToCategory(
+      const nextView = await budgetAppStore.assignMoneyToCategory(
         {
           categoryId,
-          amountCents: parsePositiveBudgetAmountToCents(
+          amountCents: parseRequiredPositiveAmountToCents(
             assignmentDrafts[categoryId] ?? '',
             'Assignment amount'
           ),
@@ -345,11 +347,11 @@ function BudgetScreen({
         throw new Error('Pick both a source and destination category.');
       }
 
-      const nextView = await budgetStore.moveMoneyBetweenCategories(
+      const nextView = await budgetAppStore.moveMoneyBetweenCategories(
         {
           fromCategoryId: moveFromCategoryId,
           toCategoryId: moveToCategoryId,
-          amountCents: parsePositiveBudgetAmountToCents(moveAmount, 'Move amount'),
+          amountCents: parseRequiredPositiveAmountToCents(moveAmount, 'Move amount'),
         },
         new Date()
       );
@@ -499,57 +501,6 @@ function BudgetScreen({
   );
 }
 
-function BudgetStatCard({
-  label,
-  value,
-  helper,
-  valueClassName,
-}: {
-  label: string;
-  value: string;
-  helper: string;
-  valueClassName?: string;
-}) {
-  return (
-    <View className="gap-1 rounded-2xl border border-border bg-card p-4">
-      <Text className="text-sm text-muted-foreground">{label}</Text>
-      <Text className={`text-3xl font-bold ${valueClassName ?? ''}`.trim()}>{value}</Text>
-      <Text className="text-sm text-muted-foreground">{helper}</Text>
-    </View>
-  );
-}
-
-function FormField({
-  label,
-  value,
-  onChangeText,
-  placeholder,
-  keyboardType,
-  autoCapitalize,
-}: {
-  label: string;
-  value: string;
-  onChangeText: (value: string) => void;
-  placeholder: string;
-  keyboardType?: 'default' | 'decimal-pad';
-  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
-}) {
-  return (
-    <View className="gap-2">
-      <Text className="text-sm font-medium">{label}</Text>
-      <TextInput
-        className="rounded-xl border border-border bg-background px-4 py-3 text-foreground"
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#71717a"
-        keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize}
-      />
-    </View>
-  );
-}
-
 function createEditableGroups(input: CompleteOnboardingInput['categoryGroups']): EditableGroup[] {
   return input.map((group) => ({
     id: createClientId('group'),
@@ -574,34 +525,6 @@ function createEmptyCategory(): EditableCategory {
     id: createClientId('category'),
     name: '',
   };
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return 'Unknown error';
-}
-
-function parsePositiveBudgetAmountToCents(value: string, label: string) {
-  if (!value.trim()) {
-    throw new Error(`${label} is required.`);
-  }
-
-  let amountCents = 0;
-
-  try {
-    amountCents = parseDecimalMoneyToCents(value);
-  } catch {
-    throw new Error(`${label} must be a valid amount.`);
-  }
-
-  if (amountCents <= 0) {
-    throw new Error(`${label} must be greater than zero.`);
-  }
-
-  return amountCents;
 }
 
 function formatMoveCategoryLabel(category: MoveCategoryOption | null) {

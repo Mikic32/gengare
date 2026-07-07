@@ -1,8 +1,17 @@
 import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
-import { budgetStore } from '@/src/features/budget/app-store';
+import { BudgetStatCard, FormField } from '@/src/features/budget/app-components';
+import {
+  centsToDecimalString,
+  createSampleDebugSmsBody,
+  formatImportOutcomeReason,
+  getErrorMessage,
+  parseDateInputToIso,
+  parseRequiredPositiveAmountToCents,
+} from '@/src/features/budget/app-helpers';
+import { budgetAppStore } from '@/src/features/budget/app-store';
 import { toLocalDateKey, toMonthKey } from '@/src/features/budget/budget-engine';
-import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
+import { formatCurrency } from '@/src/features/budget/money';
 import type { BudgetView, CanonicalTransaction, ImportOutcome } from '@/src/features/budget/types';
 import { router, Stack } from 'expo-router';
 import * as React from 'react';
@@ -125,17 +134,14 @@ export default function TransactionsScreen() {
     setLoadError(null);
 
     try {
-      const [nextBudgetView, nextTransactions, nextInboxTransactions, nextImportOutcomes] = await Promise.all([
-        budgetStore.getCurrentBudgetView(new Date()),
-        budgetStore.getTransactions(),
-        budgetStore.getInboxTransactions(),
-        budgetStore.getImportOutcomes(),
-      ]);
+      const nextScreenData = await budgetAppStore.loadTransactionsScreenData(
+        new Date()
+      );
 
-      setBudgetView(nextBudgetView);
-      setTransactions(nextTransactions);
-      setInboxTransactions(nextInboxTransactions);
-      setImportOutcomes(nextImportOutcomes);
+      setBudgetView(nextScreenData.budgetView);
+      setTransactions(nextScreenData.transactions);
+      setInboxTransactions(nextScreenData.inboxTransactions);
+      setImportOutcomes(nextScreenData.importOutcomes);
     } catch (error) {
       setLoadError(getErrorMessage(error));
     } finally {
@@ -143,17 +149,16 @@ export default function TransactionsScreen() {
     }
   }
 
-  async function refreshImportedWorkflowState(nextBudgetView: BudgetView) {
-    const [nextTransactions, nextInboxTransactions, nextImportOutcomes] = await Promise.all([
-      budgetStore.getTransactions(),
-      budgetStore.getInboxTransactions(),
-      budgetStore.getImportOutcomes(),
-    ]);
-
-    setBudgetView(nextBudgetView);
-    setTransactions(nextTransactions);
-    setInboxTransactions(nextInboxTransactions);
-    setImportOutcomes(nextImportOutcomes);
+  function applyScreenData(nextScreenData: {
+    budgetView: BudgetView | null;
+    transactions: CanonicalTransaction[];
+    inboxTransactions: CanonicalTransaction[];
+    importOutcomes: ImportOutcome[];
+  }) {
+    setBudgetView(nextScreenData.budgetView);
+    setTransactions(nextScreenData.transactions);
+    setInboxTransactions(nextScreenData.inboxTransactions);
+    setImportOutcomes(nextScreenData.importOutcomes);
   }
 
   async function handleSubmit() {
@@ -161,7 +166,10 @@ export default function TransactionsScreen() {
     setSaveError(null);
 
     try {
-      const amountCents = parsePositiveMoneyToCents(draft.amount, 'Transaction amount');
+      const amountCents = parseRequiredPositiveAmountToCents(
+        draft.amount,
+        'Transaction amount'
+      );
       const occurredAt = parseDateInputToIso(draft.occurredOn);
       const input = {
         kind: draft.kind,
@@ -172,19 +180,17 @@ export default function TransactionsScreen() {
         memo: draft.memo,
       } as const;
 
-      const nextBudgetView = draft.transactionId
-        ? await budgetStore.updateManualTransaction(
-            {
+      const nextScreenData = await budgetAppStore.saveManualTransaction(
+        draft.transactionId
+          ? {
               transactionId: draft.transactionId,
               ...input,
-            },
-            new Date()
-          )
-        : await budgetStore.createManualTransaction(input, new Date());
+            }
+          : input,
+        new Date()
+      );
 
-      const nextTransactions = await budgetStore.getTransactions();
-      setBudgetView(nextBudgetView);
-      setTransactions(nextTransactions);
+      applyScreenData(nextScreenData);
       setDraft(createEmptyDraft());
     } catch (error) {
       const message = getErrorMessage(error);
@@ -201,7 +207,7 @@ export default function TransactionsScreen() {
     setReviewError(null);
 
     try {
-      const importResult = await budgetStore.importDebugSms(
+      const { importResult, screenData } = await budgetAppStore.importDebugSms(
         {
           sender: debugSmsSender,
           body: debugSmsBody,
@@ -209,7 +215,7 @@ export default function TransactionsScreen() {
         },
         new Date()
       );
-      await refreshImportedWorkflowState(importResult.budgetView);
+      applyScreenData(screenData);
 
       if (importResult.importOutcome.kind === 'ignored') {
         const message =
@@ -255,7 +261,7 @@ export default function TransactionsScreen() {
         transaction.kind === 'outflow'
           ? reviewCategoryIds[transaction.id] ?? categoryOptions[0]?.id ?? null
           : null;
-      const nextBudgetView = await budgetStore.approveImportedTransaction(
+      const nextScreenData = await budgetAppStore.approveImportedTransaction(
         {
           transactionId: transaction.id,
           categoryId,
@@ -263,7 +269,7 @@ export default function TransactionsScreen() {
         new Date()
       );
 
-      await refreshImportedWorkflowState(nextBudgetView);
+      applyScreenData(nextScreenData);
       setReviewCategoryIds((current) => {
         const next = { ...current };
         delete next[transaction.id];
@@ -284,14 +290,14 @@ export default function TransactionsScreen() {
     setSmsImportError(null);
 
     try {
-      const nextBudgetView = await budgetStore.ignoreImportedTransaction(
+      const nextScreenData = await budgetAppStore.ignoreImportedTransaction(
         {
           transactionId: transaction.id,
         },
         new Date()
       );
 
-      await refreshImportedWorkflowState(nextBudgetView);
+      applyScreenData(nextScreenData);
       setReviewCategoryIds((current) => {
         const next = { ...current };
         delete next[transaction.id];
@@ -815,57 +821,6 @@ function ReviewTransactionCard({
   );
 }
 
-function BudgetStatCard({
-  label,
-  value,
-  helper,
-  valueClassName,
-}: {
-  label: string;
-  value: string;
-  helper: string;
-  valueClassName?: string;
-}) {
-  return (
-    <View className="gap-1 rounded-2xl border border-border bg-card p-4">
-      <Text className="text-sm text-muted-foreground">{label}</Text>
-      <Text className={`text-3xl font-bold ${valueClassName ?? ''}`.trim()}>{value}</Text>
-      <Text className="text-sm text-muted-foreground">{helper}</Text>
-    </View>
-  );
-}
-
-function FormField({
-  label,
-  value,
-  onChangeText,
-  placeholder,
-  keyboardType,
-  autoCapitalize,
-}: {
-  label: string;
-  value: string;
-  onChangeText: (value: string) => void;
-  placeholder: string;
-  keyboardType?: 'default' | 'decimal-pad';
-  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
-}) {
-  return (
-    <View className="gap-2">
-      <Text className="text-sm font-medium">{label}</Text>
-      <TextInput
-        className="rounded-xl border border-border bg-background px-4 py-3 text-foreground"
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#71717a"
-        keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize}
-      />
-    </View>
-  );
-}
-
 function createEmptyDraft(): TransactionDraft {
   return {
     transactionId: null,
@@ -878,76 +833,3 @@ function createEmptyDraft(): TransactionDraft {
   };
 }
 
-function createSampleDebugSmsBody() {
-  return [
-    'Datum: 30.06.2026, Vreme: 03:24:04',
-    'Tekuci racun: 93005***84',
-    'Odliv: 1.568,80 RSD',
-    'Raspoloziva sredstva: 4.527,55 RSD',
-    'Vasa OTP banka',
-  ].join('\n');
-}
-
-function centsToDecimalString(amountCents: number) {
-  return (amountCents / 100).toFixed(2);
-}
-
-function parsePositiveMoneyToCents(value: string, label: string) {
-  if (!value.trim()) {
-    throw new Error(`${label} is required.`);
-  }
-
-  let amountCents = 0;
-
-  try {
-    amountCents = parseDecimalMoneyToCents(value);
-  } catch {
-    throw new Error(`${label} must be a valid amount.`);
-  }
-
-  if (amountCents <= 0) {
-    throw new Error(`${label} must be greater than zero.`);
-  }
-
-  return amountCents;
-}
-
-function parseDateInputToIso(value: string) {
-  const trimmed = value.trim();
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    throw new Error('Transaction date must use YYYY-MM-DD.');
-  }
-
-  const parsed = new Date(`${trimmed}T12:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== trimmed) {
-    throw new Error('Transaction date must be valid.');
-  }
-
-  return parsed.toISOString();
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return 'Unknown error';
-}
-
-function formatImportOutcomeReason(reason: ImportOutcome['reason']) {
-  switch (reason) {
-    case 'unparseable':
-      return 'Parser could not understand the SMS';
-    case 'sender_not_allowed':
-      return 'Sender is not on the allowlist';
-    case 'before_tracking_cutover':
-      return 'Transaction happened before tracking started';
-    case 'possible_duplicate':
-      return 'Matched a duplicate heuristic';
-    case 'parsed_ok':
-      return 'Parsed successfully';
-    default:
-      return reason;
-  }
-}
