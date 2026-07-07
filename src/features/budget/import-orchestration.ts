@@ -227,7 +227,10 @@ function getTrackingCutover(snapshot: BudgetSnapshot) {
   return startingBalance?.occurredAt ?? snapshot.account?.createdAt ?? '';
 }
 
-function hasPossibleDuplicate(transactions: CanonicalTransaction[], candidateTransaction: CanonicalTransaction) {
+export function hasPossibleDuplicate(
+  transactions: CanonicalTransaction[],
+  candidateTransaction: CanonicalTransaction
+) {
   return transactions.some((transaction) => {
     if (transaction.source !== 'sms') {
       return false;

@@ -25,6 +25,7 @@ export type Category = {
 export type TransactionSource = 'starting_balance' | 'manual' | 'sms' | 'reconciliation';
 export type TransactionKind = 'inflow' | 'outflow';
 export type TransactionStatus = 'approved' | 'needs_review' | 'ignored';
+export type ReviewableImportOutcomeKind = 'needs_review' | 'possible_duplicate';
 
 export type CanonicalTransaction = {
   id: string;
@@ -128,6 +129,26 @@ export type ManualTransactionInput = {
 export type UpdateManualTransactionInput = ManualTransactionInput & {
   transactionId: string;
 };
+
+export type ApproveImportedTransactionInput = {
+  transactionId: string;
+  categoryId: string | null;
+};
+
+export type IgnoreImportedTransactionInput = {
+  transactionId: string;
+};
+
+export type TransactionWorkflowCommand =
+  | {
+      kind: 'approve_imported_transaction';
+      transactionId: string;
+      categoryId: string | null;
+    }
+  | {
+      kind: 'ignore_imported_transaction';
+      transactionId: string;
+    };
 
 export type BudgetCategoryView = {
   id: string;

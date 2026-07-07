@@ -2,10 +2,13 @@ import { deriveBudgetView, toMonthKey } from './budget-engine';
 import { orchestrateSmsImport } from './import-orchestration';
 import { applyCreateManualTransaction, applyUpdateManualTransaction } from './manual-transactions';
 import { applyCompleteOnboarding } from './onboarding';
+import { applyTransactionWorkflow } from './transaction-workflow';
 import type {
+  ApproveImportedTransactionInput,
   BudgetSnapshot,
   BudgetView,
   CompleteOnboardingInput,
+  IgnoreImportedTransactionInput,
   ImportOutcome,
   ManualTransactionInput,
   UpdateManualTransactionInput,
@@ -52,6 +55,8 @@ export type BudgetStore = {
   moveMoneyBetweenCategories(input: MoveMoneyBetweenCategoriesInput, now?: Date): Promise<BudgetView>;
   createManualTransaction(input: ManualTransactionInput, now?: Date): Promise<BudgetView>;
   updateManualTransaction(input: UpdateManualTransactionInput, now?: Date): Promise<BudgetView>;
+  approveImportedTransaction(input: ApproveImportedTransactionInput, now?: Date): Promise<BudgetView>;
+  ignoreImportedTransaction(input: IgnoreImportedTransactionInput, now?: Date): Promise<BudgetView>;
   importDebugSms(input: DebugSmsImportInput, now?: Date): Promise<DebugSmsImportResult>;
 };
 
@@ -215,6 +220,31 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
         const nextSnapshot = applyUpdateManualTransaction(snapshot, input);
+        await storage.writeSnapshot(nextSnapshot);
+        return deriveBudgetView(nextSnapshot, now);
+      });
+    },
+
+    async approveImportedTransaction(input, now = new Date()) {
+      return runSerializedMutation(async () => {
+        const snapshot = await storage.readSnapshot();
+        const nextSnapshot = applyTransactionWorkflow(snapshot, {
+          kind: 'approve_imported_transaction',
+          transactionId: input.transactionId,
+          categoryId: input.categoryId,
+        });
+        await storage.writeSnapshot(nextSnapshot);
+        return deriveBudgetView(nextSnapshot, now);
+      });
+    },
+
+    async ignoreImportedTransaction(input, now = new Date()) {
+      return runSerializedMutation(async () => {
+        const snapshot = await storage.readSnapshot();
+        const nextSnapshot = applyTransactionWorkflow(snapshot, {
+          kind: 'ignore_imported_transaction',
+          transactionId: input.transactionId,
+        });
         await storage.writeSnapshot(nextSnapshot);
         return deriveBudgetView(nextSnapshot, now);
       });

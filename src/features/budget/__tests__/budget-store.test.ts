@@ -497,6 +497,376 @@ describe('budget store bootstrap', () => {
     });
   });
 
+  it('approves imported outflows into the transaction month instead of the review month', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 500_000,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+    const groceriesCategoryId = initialView.categoryGroups[0].categories[0].id;
+
+    await store.assignMoneyToCategory(
+      {
+        categoryId: groceriesCategoryId,
+        amountCents: 200_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const importResult = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 30.06.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-07-02T09:00:00.000Z',
+      },
+      new Date('2026-07-02T09:00:00.000Z')
+    );
+
+    const approvedView = await store.approveImportedTransaction(
+      {
+        transactionId: importResult.transaction?.id ?? 'missing',
+        categoryId: groceriesCategoryId,
+      },
+      new Date('2026-07-02T09:30:00.000Z')
+    );
+
+    expect(approvedView.authoritativeBalanceCents).toBe(452_755);
+
+    const juneView = await store.getCurrentBudgetView(new Date('2026-06-30T12:00:00.000Z'));
+    const julyView = await store.getCurrentBudgetView(new Date('2026-07-02T12:00:00.000Z'));
+
+    expect(juneView?.categoryGroups[0].categories[0]).toMatchObject({
+      assignedCents: 200_000,
+      activityCents: -156_880,
+      availableCents: 43_120,
+    });
+    expect(julyView?.categoryGroups[0].categories[0]).toMatchObject({
+      assignedCents: 0,
+      activityCents: 0,
+      availableCents: 43_120,
+    });
+  });
+
+  it('approves imported inflows as categoryless cash for the transaction month', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 100_000,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const importResult = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 30.06.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Priliv: 5.825,00 RSD',
+          'Raspoloziva sredstva: 1.058,25 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-07-02T09:00:00.000Z',
+      },
+      new Date('2026-07-02T09:00:00.000Z')
+    );
+
+    const approvedView = await store.approveImportedTransaction(
+      {
+        transactionId: importResult.transaction?.id ?? 'missing',
+        categoryId: null,
+      },
+      new Date('2026-07-02T09:30:00.000Z')
+    );
+
+    expect(approvedView.authoritativeBalanceCents).toBe(105_825);
+
+    const juneView = await store.getCurrentBudgetView(new Date('2026-06-30T12:00:00.000Z'));
+    const julyView = await store.getCurrentBudgetView(new Date('2026-07-02T12:00:00.000Z'));
+
+    expect(juneView?.readyToAssignCents).toBe(682_500);
+    expect(julyView?.readyToAssignCents).toBe(682_500);
+
+    const transactions = await store.getTransactions();
+    expect(transactions[0]).toMatchObject({
+      id: importResult.transaction?.id,
+      kind: 'inflow',
+      status: 'approved',
+      categoryId: null,
+      amountCents: 582_500,
+    });
+  });
+
+  it('ignores imported candidates and removes their balance evidence from the authoritative header', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const importResult = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 30.06.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-06-25T10:31:00.000Z',
+      },
+      new Date('2026-06-25T10:31:00.000Z')
+    );
+
+    expect(importResult.budgetView.authoritativeBalanceCents).toBe(452_755);
+
+    const ignoredView = await store.ignoreImportedTransaction(
+      {
+        transactionId: importResult.transaction?.id ?? 'missing',
+      },
+      new Date('2026-06-25T11:00:00.000Z')
+    );
+
+    expect(ignoredView.authoritativeBalanceCents).toBe(125_500);
+    expect(ignoredView.readyToAssignCents).toBe(125_500);
+    await expect(store.getInboxTransactions()).resolves.toEqual([]);
+  });
+
+  it('allows approving the original SMS candidate but blocks approving its duplicate afterward', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 500_000,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+    const groceriesCategoryId = initialView.categoryGroups[0].categories[0].id;
+
+    await store.assignMoneyToCategory(
+      {
+        categoryId: groceriesCategoryId,
+        amountCents: 400_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 30.06.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-06-25T10:31:00.000Z',
+      },
+      new Date('2026-06-25T10:31:00.000Z')
+    );
+
+    const duplicateImport = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 30.06.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-06-25T10:32:00.000Z',
+      },
+      new Date('2026-06-25T10:32:00.000Z')
+    );
+
+    expect(duplicateImport.importOutcome.kind).toBe('possible_duplicate');
+
+    const originalTransactions = await store.getInboxTransactions();
+    const originalTransaction = originalTransactions.find(
+      (transaction) => transaction.id !== duplicateImport.transaction?.id
+    );
+
+    await store.approveImportedTransaction(
+      {
+        transactionId: originalTransaction?.id ?? 'missing',
+        categoryId: groceriesCategoryId,
+      },
+      new Date('2026-06-25T10:33:00.000Z')
+    );
+
+    await expect(
+      store.approveImportedTransaction(
+        {
+          transactionId: duplicateImport.transaction?.id ?? 'missing',
+          categoryId: groceriesCategoryId,
+        },
+        new Date('2026-06-25T10:34:00.000Z')
+      )
+    ).rejects.toThrow(/already approved SMS import/);
+
+    const transactions = await store.getTransactions();
+    const approvedOriginal = transactions.find((transaction) => transaction.id === originalTransaction?.id);
+    const duplicateTransaction = transactions.find(
+      (transaction) => transaction.id === duplicateImport.transaction?.id
+    );
+
+    expect(approvedOriginal).toMatchObject({
+      status: 'approved',
+      categoryId: groceriesCategoryId,
+    });
+    expect(duplicateTransaction).toMatchObject({
+      status: 'needs_review',
+      categoryId: null,
+    });
+
+    const juneView = await store.getCurrentBudgetView(new Date('2026-06-30T12:00:00.000Z'));
+    expect(juneView?.categoryGroups[0].categories[0]).toMatchObject({
+      activityCents: -156_880,
+      availableCents: 243_120,
+    });
+  });
+
+  it('also blocks approving the original later when the duplicate was approved first', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 500_000,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+    const groceriesCategoryId = initialView.categoryGroups[0].categories[0].id;
+
+    await store.assignMoneyToCategory(
+      {
+        categoryId: groceriesCategoryId,
+        amountCents: 400_000,
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const originalImport = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 30.06.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-06-25T10:31:00.000Z',
+      },
+      new Date('2026-06-25T10:31:00.000Z')
+    );
+
+    const duplicateImport = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 30.06.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-06-25T10:32:00.000Z',
+      },
+      new Date('2026-06-25T10:32:00.000Z')
+    );
+
+    await store.approveImportedTransaction(
+      {
+        transactionId: duplicateImport.transaction?.id ?? 'missing',
+        categoryId: groceriesCategoryId,
+      },
+      new Date('2026-06-25T10:33:00.000Z')
+    );
+
+    await expect(
+      store.approveImportedTransaction(
+        {
+          transactionId: originalImport.transaction?.id ?? 'missing',
+          categoryId: groceriesCategoryId,
+        },
+        new Date('2026-06-25T10:34:00.000Z')
+      )
+    ).rejects.toThrow(/already approved SMS import/);
+
+    const transactions = await store.getTransactions();
+    const approvedDuplicate = transactions.find(
+      (transaction) => transaction.id === duplicateImport.transaction?.id
+    );
+    const originalTransaction = transactions.find(
+      (transaction) => transaction.id === originalImport.transaction?.id
+    );
+
+    expect(approvedDuplicate).toMatchObject({
+      status: 'approved',
+      categoryId: groceriesCategoryId,
+    });
+    expect(originalTransaction).toMatchObject({
+      status: 'needs_review',
+      categoryId: null,
+    });
+  });
+
   it('rejects invalid approved manual transaction category invariants', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
 
