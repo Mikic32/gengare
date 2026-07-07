@@ -386,15 +386,15 @@ function BudgetScreen({
 
       <View className="gap-3">
         <BudgetStatCard
-          label="Authoritative balance"
-          value={formatCurrency(budgetView.authoritativeBalanceCents, budgetView.currencyCode)}
-          helper="Latest parsed bank evidence, even if the SMS still needs review."
+          label="Account balance"
+          value={formatCurrency(budgetView.moneyState.accountBalance.amountCents, budgetView.currencyCode)}
+          helper="Latest non-ignored bank balance evidence."
         />
         <BudgetStatCard
           label="Ready to assign"
-          value={formatCurrency(budgetView.readyToAssignCents, budgetView.currencyCode)}
-          helper="Unassigned cash available for this month."
-          valueClassName={budgetView.readyToAssignCents < 0 ? 'text-destructive' : undefined}
+          value={formatCurrency(budgetView.moneyState.assignableCash.amountCents, budgetView.currencyCode)}
+          helper="Approved uncategorized cash available this month."
+          valueClassName={budgetView.moneyState.assignableCash.amountCents < 0 ? 'text-destructive' : undefined}
         />
       </View>
 

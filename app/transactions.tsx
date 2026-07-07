@@ -402,14 +402,14 @@ export default function TransactionsScreen() {
           <View className="gap-3">
             <BudgetStatCard
               label="Ready to assign"
-              value={formatCurrency(budgetView.readyToAssignCents, budgetView.currencyCode)}
-              helper="Approved inflows land here until you assign them."
-              valueClassName={budgetView.readyToAssignCents < 0 ? 'text-destructive' : undefined}
+              value={formatCurrency(budgetView.moneyState.assignableCash.amountCents, budgetView.currencyCode)}
+              helper="Approved uncategorized inflows land here until you assign them."
+              valueClassName={budgetView.moneyState.assignableCash.amountCents < 0 ? 'text-destructive' : undefined}
             />
             <BudgetStatCard
-              label="Authoritative balance"
-              value={formatCurrency(budgetView.authoritativeBalanceCents, budgetView.currencyCode)}
-              helper="Newest parsed bank balance can move ahead of approval and budgeting."
+              label="Account balance"
+              value={formatCurrency(budgetView.moneyState.accountBalance.amountCents, budgetView.currencyCode)}
+              helper="Newest non-ignored bank balance evidence."
             />
           </View>
 
@@ -554,7 +554,7 @@ export default function TransactionsScreen() {
             ) : (
               <View className="rounded-xl bg-muted/40 p-3">
                 <Text className="text-sm text-muted-foreground">
-                  Approved inflows stay uncategorized and increase Ready to assign.
+                  Approved inflows stay uncategorized and increase assignable cash.
                 </Text>
               </View>
             )}
@@ -592,7 +592,7 @@ export default function TransactionsScreen() {
                   currencyCode={budgetView.currencyCode}
                   badgeLabel="Needs review"
                   subtitle="Waiting for review"
-                  helperText="This candidate updates the account header balance but does not touch category math until approval."
+                  helperText="This candidate updates account balance evidence but does not touch category math until approval."
                   categoryOptions={categoryOptions}
                   selectedCategoryId={reviewCategoryIds[transaction.id] ?? categoryOptions[0]?.id ?? null}
                   isSubmitting={reviewingTransactionId === transaction.id}
@@ -625,7 +625,7 @@ export default function TransactionsScreen() {
                   currencyCode={budgetView.currencyCode}
                   badgeLabel="Possible duplicate"
                   subtitle="Review possible duplicate"
-                  helperText="This candidate updates the account header balance but was flagged as a possible duplicate."
+                  helperText="This candidate updates account balance evidence but was flagged as a possible duplicate."
                   categoryOptions={categoryOptions}
                   selectedCategoryId={reviewCategoryIds[transaction.id] ?? categoryOptions[0]?.id ?? null}
                   isSubmitting={reviewingTransactionId === transaction.id}
@@ -685,7 +685,7 @@ export default function TransactionsScreen() {
               manualTransactions.map((transaction) => {
                 const categoryLabel = transaction.categoryId
                   ? categoryOptions.find((category) => category.id === transaction.categoryId)?.label ?? 'Unknown category'
-                  : 'Ready to assign';
+                  : 'Assignable cash';
 
                 return (
                   <View key={transaction.id} className="gap-3 rounded-2xl border border-border bg-card p-4">
@@ -712,7 +712,7 @@ export default function TransactionsScreen() {
                       <Text className="text-sm font-medium">{categoryLabel}</Text>
                       <Text className="text-sm text-muted-foreground">
                         {transaction.kind === 'inflow'
-                          ? 'Increases Ready to assign for this transaction month.'
+                          ? 'Increases assignable cash for this transaction month.'
                           : 'Reduces category availability in this transaction month.'}
                       </Text>
                       {transaction.memo ? <Text className="text-sm text-muted-foreground">{transaction.memo}</Text> : null}
@@ -804,7 +804,7 @@ function ReviewTransactionCard({
       ) : (
         <View className="rounded-xl bg-muted/40 p-3">
           <Text className="text-sm text-muted-foreground">
-            Approving this inflow keeps it uncategorized and increases Ready to assign.
+            Approving this inflow keeps it uncategorized and increases assignable cash.
           </Text>
         </View>
       )}

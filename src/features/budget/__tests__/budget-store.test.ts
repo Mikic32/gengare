@@ -35,8 +35,8 @@ describe('budget store bootstrap', () => {
     expect(view.accountName).toBe('Main account');
     expect(view.currencyCode).toBe('RSD');
     expect(view.monthKey).toBe('2026-06');
-    expect(view.authoritativeBalanceCents).toBe(125_500);
-    expect(view.readyToAssignCents).toBe(125_500);
+    expectAccountBalance(view, 125_500);
+    expectAssignableCash(view, 125_500);
     expect(view.categoryGroups).toEqual([
       {
         id: expect.any(String),
@@ -103,7 +103,7 @@ describe('budget store bootstrap', () => {
       new Date('2026-06-24T10:00:00.000Z')
     );
 
-    expect(assignedView.readyToAssignCents).toBe(75_500);
+    expectAssignableCash(assignedView, 75_500);
     expect(assignedView.categoryGroups).toEqual([
       {
         id: expect.any(String),
@@ -169,7 +169,7 @@ describe('budget store bootstrap', () => {
       new Date('2026-06-24T10:00:00.000Z')
     );
 
-    expect(movedView.readyToAssignCents).toBe(75_500);
+    expectAssignableCash(movedView, 75_500);
     expect(movedView.categoryGroups).toEqual([
       {
         id: expect.any(String),
@@ -237,7 +237,7 @@ describe('budget store bootstrap', () => {
       new Date('2026-06-26T10:00:00.000Z')
     );
 
-    expect(updatedView.readyToAssignCents).toBe(75_500);
+    expectAssignableCash(updatedView, 75_500);
     expect(updatedView.categoryGroups[0].categories[0]).toMatchObject({
       name: 'Rent',
       assignedCents: 50_000,
@@ -277,7 +277,7 @@ describe('budget store bootstrap', () => {
       new Date('2026-06-24T10:00:00.000Z')
     );
 
-    expect(initialView.readyToAssignCents).toBe(125_500);
+    expectAssignableCash(initialView, 125_500);
 
     const updatedView = await store.createManualTransaction(
       {
@@ -291,7 +291,7 @@ describe('budget store bootstrap', () => {
       new Date('2026-06-26T10:00:00.000Z')
     );
 
-    expect(updatedView.readyToAssignCents).toBe(145_500);
+    expectAssignableCash(updatedView, 145_500);
 
     const transactions = await store.getTransactions();
     expect(transactions[0]).toMatchObject({
@@ -305,7 +305,7 @@ describe('budget store bootstrap', () => {
     });
   });
 
-  it('imports a debug SMS as a needs-review candidate and updates authoritative balance before approval', async () => {
+  it('imports a debug SMS as a needs-review candidate and updates account balance before approval', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
 
     const initialView = await store.completeOnboarding(
@@ -323,8 +323,8 @@ describe('budget store bootstrap', () => {
       new Date('2026-06-24T10:00:00.000Z')
     );
 
-    expect(initialView.authoritativeBalanceCents).toBe(125_500);
-    expect(initialView.readyToAssignCents).toBe(125_500);
+    expectAccountBalance(initialView, 125_500);
+    expectAssignableCash(initialView, 125_500);
 
     const importResult = await store.importDebugSms(
       {
@@ -342,8 +342,8 @@ describe('budget store bootstrap', () => {
     );
 
     const importedView = importResult.budgetView;
-    expect(importedView.authoritativeBalanceCents).toBe(452_755);
-    expect(importedView.readyToAssignCents).toBe(125_500);
+    expectAccountBalance(importedView, 452_755);
+    expectAssignableCash(importedView, 125_500);
     const expectedOccurredAt = new Date(2026, 5, 30, 3, 24, 4, 0).toISOString();
     expect(importResult.parseResult?.status).toBe('parsed');
     expect(importResult.transaction?.status).toBe('needs_review');
@@ -443,8 +443,8 @@ describe('budget store bootstrap', () => {
     );
 
     const importedView = importResult.budgetView;
-    expect(importedView.authoritativeBalanceCents).toBe(125_500);
-    expect(importedView.readyToAssignCents).toBe(125_500);
+    expectAccountBalance(importedView, 125_500);
+    expectAssignableCash(importedView, 125_500);
     expect(importResult.parseResult?.status).toBe('unparseable');
     expect(importResult.transaction).toBeNull();
     expect(importResult.importOutcome).toMatchObject({
@@ -547,7 +547,7 @@ describe('budget store bootstrap', () => {
       new Date('2026-07-02T09:30:00.000Z')
     );
 
-    expect(approvedView.authoritativeBalanceCents).toBe(452_755);
+    expectAccountBalance(approvedView, 452_755);
 
     const juneView = await store.getCurrentBudgetView(new Date('2026-06-30T12:00:00.000Z'));
     const julyView = await store.getCurrentBudgetView(new Date('2026-07-02T12:00:00.000Z'));
@@ -605,13 +605,13 @@ describe('budget store bootstrap', () => {
       new Date('2026-07-02T09:30:00.000Z')
     );
 
-    expect(approvedView.authoritativeBalanceCents).toBe(105_825);
+    expectAccountBalance(approvedView, 105_825);
 
     const juneView = await store.getCurrentBudgetView(new Date('2026-06-30T12:00:00.000Z'));
     const julyView = await store.getCurrentBudgetView(new Date('2026-07-02T12:00:00.000Z'));
 
-    expect(juneView?.readyToAssignCents).toBe(682_500);
-    expect(julyView?.readyToAssignCents).toBe(682_500);
+    expectAssignableCash(juneView, 682_500);
+    expectAssignableCash(julyView, 682_500);
 
     const transactions = await store.getTransactions();
     expect(transactions[0]).toMatchObject({
@@ -623,7 +623,7 @@ describe('budget store bootstrap', () => {
     });
   });
 
-  it('ignores imported candidates and removes their balance evidence from the authoritative header', async () => {
+  it('ignores imported candidates and removes their balance evidence from account balance', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
 
     await store.completeOnboarding(
@@ -656,7 +656,7 @@ describe('budget store bootstrap', () => {
       new Date('2026-06-25T10:31:00.000Z')
     );
 
-    expect(importResult.budgetView.authoritativeBalanceCents).toBe(452_755);
+    expectAccountBalance(importResult.budgetView, 452_755);
 
     const ignoredView = await store.ignoreImportedTransaction(
       {
@@ -665,8 +665,8 @@ describe('budget store bootstrap', () => {
       new Date('2026-06-25T11:00:00.000Z')
     );
 
-    expect(ignoredView.authoritativeBalanceCents).toBe(125_500);
-    expect(ignoredView.readyToAssignCents).toBe(125_500);
+    expectAccountBalance(ignoredView, 125_500);
+    expectAssignableCash(ignoredView, 125_500);
     await expect(store.getInboxTransactions()).resolves.toEqual([]);
   });
 
@@ -1117,7 +1117,7 @@ describe('budget store bootstrap', () => {
       new Date('2026-06-24T10:00:00.000Z')
     );
 
-    expect(assignedView.readyToAssignCents).toBe(-4_500);
+    expectAssignableCash(assignedView, -4_500);
     expect(assignedView.categoryGroups[0].categories[0].assignedCents).toBe(130_000);
     expect(assignedView.categoryGroups[0].categories[0].availableCents).toBe(130_000);
   });
@@ -1161,7 +1161,7 @@ describe('budget store bootstrap', () => {
 
     const reloadedView = await store.getCurrentBudgetView(new Date('2026-06-24T10:00:00.000Z'));
 
-    expect(reloadedView?.readyToAssignCents).toBe(75_500);
+    expectAssignableCash(reloadedView, 75_500);
     expect(reloadedView?.categoryGroups).toEqual([
       {
         id: expect.any(String),
@@ -1317,8 +1317,8 @@ describe('budget engine month math', () => {
       new Date('2026-06-24T10:00:00.000Z')
     );
 
-    expect(view.readyToAssignCents).toBe(90_000);
-    expect(view.authoritativeBalanceCents).toBe(90_000);
+    expectAssignableCash(view, 90_000);
+    expectAccountBalance(view, 90_000);
     expect(view.monthKey).toBe('2026-06');
   });
 
@@ -1394,12 +1394,12 @@ describe('budget engine month math', () => {
       new Date('2026-06-24T10:00:00.000Z')
     );
 
-    expect(view.readyToAssignCents).toBe(10_000);
+    expectAssignableCash(view, 10_000);
     expect(view.categoryGroups[0].categories[0].availableCents).toBe(0);
-    expect(view.authoritativeBalanceCents).toBe(10_000);
+    expectAccountBalance(view, 10_000);
   });
 
-  it('uses created-at as a stable tiebreaker for equal occurred-at authoritative balances', () => {
+  it('uses created-at as a stable tiebreaker for equal occurred-at account balance evidence', () => {
     const view = deriveBudgetView(
       {
         account: {
@@ -1448,9 +1448,29 @@ describe('budget engine month math', () => {
       new Date('2026-06-25T12:00:00.000Z')
     );
 
-    expect(view.authoritativeBalanceCents).toBe(200_000);
+    expectAccountBalance(view, 200_000);
   });
 });
+
+function expectAccountBalance(
+  view: { moneyState: { accountBalance: { amountCents: number; derivedFrom: string } } } | null | undefined,
+  amountCents: number
+) {
+  expect(view?.moneyState.accountBalance).toEqual({
+    amountCents,
+    derivedFrom: 'latest_non_ignored_balance_evidence',
+  });
+}
+
+function expectAssignableCash(
+  view: { moneyState: { assignableCash: { amountCents: number; derivedFrom: string } } } | null | undefined,
+  amountCents: number
+) {
+  expect(view?.moneyState.assignableCash).toEqual({
+    amountCents,
+    derivedFrom: 'approved_categoryless_inflows_minus_assignments_and_overspending',
+  });
+}
 
 function createDelayedWriteBudgetStorage(): BudgetStorage {
   const storage = createMemoryBudgetStorage();

@@ -164,11 +164,25 @@ export type BudgetCategoryGroupView = {
   categories: BudgetCategoryView[];
 };
 
+export type AccountBalanceView = {
+  amountCents: number;
+  derivedFrom: 'latest_non_ignored_balance_evidence';
+};
+
+export type AssignableCashView = {
+  amountCents: number;
+  derivedFrom: 'approved_categoryless_inflows_minus_assignments_and_overspending';
+};
+
+export type BudgetMoneyState = {
+  accountBalance: AccountBalanceView;
+  assignableCash: AssignableCashView;
+};
+
 export type BudgetView = {
   accountName: string;
   currencyCode: CurrencyCode;
   monthKey: string;
-  authoritativeBalanceCents: number;
-  readyToAssignCents: number;
+  moneyState: BudgetMoneyState;
   categoryGroups: BudgetCategoryGroupView[];
 };

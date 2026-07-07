@@ -90,8 +90,16 @@ const TEST_BUDGET_VIEW: BudgetView = {
   accountName: 'Main account',
   currencyCode: 'RSD',
   monthKey: '2026-07',
-  authoritativeBalanceCents: 120_000,
-  readyToAssignCents: 45_000,
+  moneyState: {
+    accountBalance: {
+      amountCents: 120_000,
+      derivedFrom: 'latest_non_ignored_balance_evidence',
+    },
+    assignableCash: {
+      amountCents: 45_000,
+      derivedFrom: 'approved_categoryless_inflows_minus_assignments_and_overspending',
+    },
+  },
   categoryGroups: [
     {
       id: 'group-1',

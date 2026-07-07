@@ -15,10 +15,14 @@ type CategoryMonthTotals = {
 };
 
 type MonthLedger = {
-  readyToAssignCents: number;
+  assignableCashCents: number;
   positiveCarryByCategory: Map<string, number>;
   overspendingCents: number;
 };
+
+const ACCOUNT_BALANCE_RULE = 'latest_non_ignored_balance_evidence' as const;
+const ASSIGNABLE_CASH_RULE =
+  'approved_categoryless_inflows_minus_assignments_and_overspending' as const;
 
 export function deriveBudgetView(snapshot: BudgetSnapshot, now: Date = new Date()): BudgetView {
   if (!snapshot.account) {
@@ -30,7 +34,7 @@ export function deriveBudgetView(snapshot: BudgetSnapshot, now: Date = new Date(
   const monthLedgers = new Map<string, MonthLedger>();
 
   let previousMonthLedger: MonthLedger = {
-    readyToAssignCents: 0,
+    assignableCashCents: 0,
     positiveCarryByCategory: new Map<string, number>(),
     overspendingCents: 0,
   };
@@ -44,10 +48,13 @@ export function deriveBudgetView(snapshot: BudgetSnapshot, now: Date = new Date(
       previousMonthLedger.positiveCarryByCategory
     );
 
-    const inflowThisMonth = sumMonthInflows(snapshot.transactions, key);
+    const inflowThisMonth = sumApprovedAssignableInflows(snapshot.transactions, key);
     const assignedThisMonth = sumMonthAssignments(snapshot.assignmentEvents, key);
-    const readyToAssignCents =
-      previousMonthLedger.readyToAssignCents + inflowThisMonth - assignedThisMonth - previousMonthLedger.overspendingCents;
+    const assignableCashCents =
+      previousMonthLedger.assignableCashCents +
+      inflowThisMonth -
+      assignedThisMonth -
+      previousMonthLedger.overspendingCents;
     const overspendingCents = sumOverspending(categoryTotals);
     const positiveCarryByCategory = new Map<string, number>();
 
@@ -56,7 +63,7 @@ export function deriveBudgetView(snapshot: BudgetSnapshot, now: Date = new Date(
     }
 
     const currentLedger: MonthLedger = {
-      readyToAssignCents,
+      assignableCashCents,
       positiveCarryByCategory,
       overspendingCents,
     };
@@ -77,8 +84,10 @@ export function deriveBudgetView(snapshot: BudgetSnapshot, now: Date = new Date(
     accountName: snapshot.account.name,
     currencyCode: snapshot.account.currencyCode,
     monthKey,
-    authoritativeBalanceCents: deriveAuthoritativeBalance(snapshot.transactions),
-    readyToAssignCents: monthLedgers.get(monthKey)?.readyToAssignCents ?? 0,
+    moneyState: deriveMoneyState(
+      snapshot.transactions,
+      monthLedgers.get(monthKey)?.assignableCashCents ?? 0
+    ),
     categoryGroups: buildGroupViews(snapshot.categoryGroups, snapshot.categories, currentMonthCategoryTotals),
   };
 }
@@ -169,13 +178,12 @@ function buildCategoryMonthTotals(
   return totals;
 }
 
-function sumMonthInflows(transactions: CanonicalTransaction[], monthKey: string): number {
+function sumApprovedAssignableInflows(
+  transactions: CanonicalTransaction[],
+  monthKey: string
+): number {
   return transactions.reduce((total, transaction) => {
-    if (transaction.status !== 'approved' || transaction.kind !== 'inflow' || transaction.categoryId) {
-      return total;
-    }
-
-    if (toMonthKey(transaction.occurredAt) !== monthKey) {
+    if (!isApprovedAssignableInflow(transaction, monthKey)) {
       return total;
     }
 
@@ -205,13 +213,39 @@ function sumOverspending(categoryTotals: Map<string, CategoryMonthTotals>): numb
   return total;
 }
 
-function deriveAuthoritativeBalance(transactions: CanonicalTransaction[]): number {
+function deriveMoneyState(transactions: CanonicalTransaction[], assignableCashCents: number) {
+  return {
+    accountBalance: deriveAccountBalance(transactions),
+    assignableCash: {
+      amountCents: assignableCashCents,
+      derivedFrom: ASSIGNABLE_CASH_RULE,
+    },
+  };
+}
+
+function deriveAccountBalance(transactions: CanonicalTransaction[]) {
   const latestWithBalance = [...transactions]
-    .filter((transaction) => transaction.status !== 'ignored' && transaction.balanceAfterCents !== null)
+    .filter(isBalanceEvidenceTransaction)
     .sort(compareTransactionsByBalanceEvidenceOrder)
     .at(-1);
 
-  return latestWithBalance?.balanceAfterCents ?? 0;
+  return {
+    amountCents: latestWithBalance?.balanceAfterCents ?? 0,
+    derivedFrom: ACCOUNT_BALANCE_RULE,
+  };
+}
+
+function isApprovedAssignableInflow(transaction: CanonicalTransaction, monthKey: string) {
+  return (
+    transaction.status === 'approved' &&
+    transaction.kind === 'inflow' &&
+    transaction.categoryId === null &&
+    toMonthKey(transaction.occurredAt) === monthKey
+  );
+}
+
+function isBalanceEvidenceTransaction(transaction: CanonicalTransaction) {
+  return transaction.status !== 'ignored' && transaction.balanceAfterCents !== null;
 }
 
 function compareTransactionsByBalanceEvidenceOrder(left: CanonicalTransaction, right: CanonicalTransaction) {
