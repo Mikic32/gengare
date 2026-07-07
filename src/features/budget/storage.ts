@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
 
-import type { BudgetStorage } from './store';
+import type { BudgetStorage, ImportedSmsFacts } from './store';
 import type {
   Account,
   AssignmentEvent,
@@ -149,7 +149,7 @@ function createSQLiteBudgetStorage(): BudgetStorage {
       };
     },
 
-    async writeSnapshot(snapshot) {
+    async replaceSnapshot(snapshot) {
       const db = await getDatabase();
       await ensureSchema(db);
       await db.withTransactionAsync(async () => {
@@ -268,6 +268,69 @@ function createSQLiteBudgetStorage(): BudgetStorage {
         }
       });
     },
+
+    async appendAssignmentEvents(events) {
+      const db = await getDatabase();
+      await ensureSchema(db);
+      await db.withTransactionAsync(async () => {
+        for (const assignmentEvent of events) {
+          await db.runAsync(
+            'INSERT INTO assignment_events (id, category_id, month_key, amount_cents, created_at) VALUES (?, ?, ?, ?, ?)',
+            assignmentEvent.id,
+            assignmentEvent.categoryId,
+            assignmentEvent.monthKey,
+            assignmentEvent.amountCents,
+            assignmentEvent.createdAt
+          );
+        }
+      });
+    },
+
+    async appendTransaction(transaction) {
+      const db = await getDatabase();
+      await ensureSchema(db);
+      await insertTransaction(db, transaction);
+    },
+
+    async updateTransaction(transaction) {
+      const db = await getDatabase();
+      await ensureSchema(db);
+      await db.runAsync(
+        `UPDATE transactions
+         SET account_id = ?, source = ?, kind = ?, status = ?, amount_cents = ?, occurred_at = ?, category_id = ?, balance_after_cents = ?, payee = ?, memo = ?, created_at = ?
+         WHERE id = ?`,
+        transaction.accountId,
+        transaction.source,
+        transaction.kind,
+        transaction.status,
+        transaction.amountCents,
+        transaction.occurredAt,
+        transaction.categoryId,
+        transaction.balanceAfterCents,
+        transaction.payee,
+        transaction.memo,
+        transaction.createdAt,
+        transaction.id
+      );
+    },
+
+    async appendImportedSmsFacts(facts) {
+      const db = await getDatabase();
+      await ensureSchema(db);
+      await db.withTransactionAsync(async () => {
+        if (facts.candidateTransaction) {
+          await insertTransaction(db, facts.candidateTransaction);
+        }
+
+        await insertRawSmsMessage(db, facts.rawSmsMessage);
+
+        if (facts.parseResult) {
+          await insertSmsParseResult(db, facts.parseResult);
+        }
+
+        await insertImportOutcome(db, facts.importOutcome);
+      });
+    },
   };
 }
 
@@ -286,12 +349,37 @@ function createWebBudgetStorage(): BudgetStorage {
       return normalizeSnapshot(JSON.parse(raw) as Partial<BudgetSnapshot>);
     },
 
-    async writeSnapshot(snapshot) {
+    async replaceSnapshot(snapshot) {
       if (typeof localStorage === 'undefined') {
         return;
       }
 
       localStorage.setItem(WEB_STORAGE_KEY, JSON.stringify(snapshot));
+    },
+
+    async appendAssignmentEvents(events) {
+      await updateWebSnapshot((snapshot) => ({
+        ...snapshot,
+        assignmentEvents: [...snapshot.assignmentEvents, ...events],
+      }));
+    },
+
+    async appendTransaction(transaction) {
+      await updateWebSnapshot((snapshot) => ({
+        ...snapshot,
+        transactions: [...snapshot.transactions, transaction],
+      }));
+    },
+
+    async updateTransaction(transaction) {
+      await updateWebSnapshot((snapshot) => ({
+        ...snapshot,
+        transactions: snapshot.transactions.map((entry) => (entry.id === transaction.id ? transaction : entry)),
+      }));
+    },
+
+    async appendImportedSmsFacts(facts) {
+      await updateWebSnapshot((snapshot) => appendImportedSmsFactsToSnapshot(snapshot, facts));
     },
   };
 }
@@ -516,5 +604,91 @@ function normalizeSnapshot(snapshot: Partial<BudgetSnapshot>): BudgetSnapshot {
     rawSmsMessages: snapshot.rawSmsMessages ?? [],
     smsParseResults: snapshot.smsParseResults ?? [],
     importOutcomes: snapshot.importOutcomes ?? [],
+  };
+}
+
+async function insertTransaction(db: SQLiteDatabase, transaction: CanonicalTransaction) {
+  await db.runAsync(
+    'INSERT INTO transactions (id, account_id, source, kind, status, amount_cents, occurred_at, category_id, balance_after_cents, payee, memo, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    transaction.id,
+    transaction.accountId,
+    transaction.source,
+    transaction.kind,
+    transaction.status,
+    transaction.amountCents,
+    transaction.occurredAt,
+    transaction.categoryId,
+    transaction.balanceAfterCents,
+    transaction.payee,
+    transaction.memo,
+    transaction.createdAt
+  );
+}
+
+async function insertRawSmsMessage(db: SQLiteDatabase, rawSmsMessage: RawSmsMessage) {
+  await db.runAsync(
+    'INSERT INTO raw_sms_messages (id, sender, body, received_at, created_at) VALUES (?, ?, ?, ?, ?)',
+    rawSmsMessage.id,
+    rawSmsMessage.sender,
+    rawSmsMessage.body,
+    rawSmsMessage.receivedAt,
+    rawSmsMessage.createdAt
+  );
+}
+
+async function insertSmsParseResult(db: SQLiteDatabase, smsParseResult: SmsParseResult) {
+  await db.runAsync(
+    'INSERT INTO sms_parse_results (id, raw_sms_message_id, parser_id, parser_version, status, transaction_id, kind, amount_cents, occurred_at, balance_after_cents, payee, memo, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    smsParseResult.id,
+    smsParseResult.rawSmsMessageId,
+    smsParseResult.parserId,
+    smsParseResult.parserVersion,
+    smsParseResult.status,
+    smsParseResult.transactionId,
+    smsParseResult.kind,
+    smsParseResult.amountCents,
+    smsParseResult.occurredAt,
+    smsParseResult.balanceAfterCents,
+    smsParseResult.payee,
+    smsParseResult.memo,
+    smsParseResult.createdAt
+  );
+}
+
+async function insertImportOutcome(db: SQLiteDatabase, importOutcome: ImportOutcome) {
+  await db.runAsync(
+    'INSERT INTO import_outcomes (id, raw_sms_message_id, parse_result_id, kind, candidate_transaction_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    importOutcome.id,
+    importOutcome.rawSmsMessageId,
+    importOutcome.parseResultId,
+    importOutcome.kind,
+    importOutcome.candidateTransactionId,
+    importOutcome.reason,
+    importOutcome.createdAt
+  );
+}
+
+async function updateWebSnapshot(
+  update: (snapshot: BudgetSnapshot) => BudgetSnapshot
+) {
+  if (typeof localStorage === 'undefined') {
+    return;
+  }
+
+  const rawSnapshot = localStorage.getItem(WEB_STORAGE_KEY);
+  const snapshot = rawSnapshot ? normalizeSnapshot(JSON.parse(rawSnapshot) as Partial<BudgetSnapshot>) : emptySnapshot();
+  const nextSnapshot = update(snapshot);
+  localStorage.setItem(WEB_STORAGE_KEY, JSON.stringify(nextSnapshot));
+}
+
+function appendImportedSmsFactsToSnapshot(snapshot: BudgetSnapshot, facts: ImportedSmsFacts): BudgetSnapshot {
+  return {
+    ...snapshot,
+    transactions: facts.candidateTransaction
+      ? [...snapshot.transactions, facts.candidateTransaction]
+      : snapshot.transactions,
+    rawSmsMessages: [...snapshot.rawSmsMessages, facts.rawSmsMessage],
+    smsParseResults: facts.parseResult ? [...snapshot.smsParseResults, facts.parseResult] : snapshot.smsParseResults,
+    importOutcomes: [...snapshot.importOutcomes, facts.importOutcome],
   };
 }

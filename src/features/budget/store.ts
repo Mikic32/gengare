@@ -5,18 +5,33 @@ import { applyCompleteOnboarding } from './onboarding';
 import { applyTransactionWorkflow } from './transaction-workflow';
 import type {
   ApproveImportedTransactionInput,
+  AssignmentEvent,
   BudgetSnapshot,
   BudgetView,
+  CanonicalTransaction,
   CompleteOnboardingInput,
   IgnoreImportedTransactionInput,
   ImportOutcome,
   ManualTransactionInput,
+  RawSmsMessage,
+  SmsParseResult,
   UpdateManualTransactionInput,
 } from './types';
 
+export type ImportedSmsFacts = {
+  rawSmsMessage: RawSmsMessage;
+  parseResult: SmsParseResult | null;
+  candidateTransaction: CanonicalTransaction | null;
+  importOutcome: ImportOutcome;
+};
+
 export type BudgetStorage = {
   readSnapshot(): Promise<BudgetSnapshot>;
-  writeSnapshot(snapshot: BudgetSnapshot): Promise<void>;
+  replaceSnapshot(snapshot: BudgetSnapshot): Promise<void>;
+  appendAssignmentEvents(events: AssignmentEvent[]): Promise<void>;
+  appendTransaction(transaction: CanonicalTransaction): Promise<void>;
+  updateTransaction(transaction: CanonicalTransaction): Promise<void>;
+  appendImportedSmsFacts(facts: ImportedSmsFacts): Promise<void>;
 };
 
 export type AssignMoneyToCategoryInput = {
@@ -140,7 +155,7 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
         const nextSnapshot = applyCompleteOnboarding(snapshot, input, now);
-        await storage.writeSnapshot(nextSnapshot);
+        await storage.replaceSnapshot(nextSnapshot);
         return deriveBudgetView(nextSnapshot, now);
       });
     },
@@ -152,21 +167,16 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
         assertWholeNumberOfCents(input.amountCents, 'Assigned amount');
         assertCategoryExists(snapshot, input.categoryId);
 
-        const nextSnapshot: BudgetSnapshot = {
-          ...snapshot,
-          assignmentEvents: [
-            ...snapshot.assignmentEvents,
-            {
-              id: createAssignmentEventId(snapshot),
-              categoryId: input.categoryId,
-              monthKey: toMonthKey(now),
-              amountCents: input.amountCents,
-              createdAt: now.toISOString(),
-            },
-          ],
+        const nextEvent: AssignmentEvent = {
+          id: createAssignmentEventId(snapshot),
+          categoryId: input.categoryId,
+          monthKey: toMonthKey(now),
+          amountCents: input.amountCents,
+          createdAt: now.toISOString(),
         };
+        const nextSnapshot = appendAssignmentEventsToSnapshot(snapshot, [nextEvent]);
 
-        await storage.writeSnapshot(nextSnapshot);
+        await storage.appendAssignmentEvents([nextEvent]);
         return deriveBudgetView(nextSnapshot, now);
       });
     },
@@ -181,28 +191,25 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
         assertDifferentCategories(input.fromCategoryId, input.toCategoryId);
         assertCategoryHasAvailableBalance(snapshot, input.fromCategoryId, input.amountCents, now);
 
-        const nextSnapshot: BudgetSnapshot = {
-          ...snapshot,
-          assignmentEvents: [
-            ...snapshot.assignmentEvents,
-            {
-              id: createAssignmentEventId(snapshot, 1),
-              categoryId: input.fromCategoryId,
-              monthKey: toMonthKey(now),
-              amountCents: -input.amountCents,
-              createdAt: now.toISOString(),
-            },
-            {
-              id: createAssignmentEventId(snapshot, 2),
-              categoryId: input.toCategoryId,
-              monthKey: toMonthKey(now),
-              amountCents: input.amountCents,
-              createdAt: now.toISOString(),
-            },
-          ],
-        };
+        const nextEvents: AssignmentEvent[] = [
+          {
+            id: createAssignmentEventId(snapshot, 1),
+            categoryId: input.fromCategoryId,
+            monthKey: toMonthKey(now),
+            amountCents: -input.amountCents,
+            createdAt: now.toISOString(),
+          },
+          {
+            id: createAssignmentEventId(snapshot, 2),
+            categoryId: input.toCategoryId,
+            monthKey: toMonthKey(now),
+            amountCents: input.amountCents,
+            createdAt: now.toISOString(),
+          },
+        ];
+        const nextSnapshot = appendAssignmentEventsToSnapshot(snapshot, nextEvents);
 
-        await storage.writeSnapshot(nextSnapshot);
+        await storage.appendAssignmentEvents(nextEvents);
         return deriveBudgetView(nextSnapshot, now);
       });
     },
@@ -211,7 +218,8 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
         const nextSnapshot = applyCreateManualTransaction(snapshot, input, now);
-        await storage.writeSnapshot(nextSnapshot);
+        const nextTransaction = getAppendedTransaction(snapshot, nextSnapshot);
+        await storage.appendTransaction(nextTransaction);
         return deriveBudgetView(nextSnapshot, now);
       });
     },
@@ -220,7 +228,8 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
         const nextSnapshot = applyUpdateManualTransaction(snapshot, input);
-        await storage.writeSnapshot(nextSnapshot);
+        const updatedTransaction = getTransactionById(nextSnapshot, input.transactionId);
+        await storage.updateTransaction(updatedTransaction);
         return deriveBudgetView(nextSnapshot, now);
       });
     },
@@ -233,7 +242,8 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
           transactionId: input.transactionId,
           categoryId: input.categoryId,
         });
-        await storage.writeSnapshot(nextSnapshot);
+        const updatedTransaction = getTransactionById(nextSnapshot, input.transactionId);
+        await storage.updateTransaction(updatedTransaction);
         return deriveBudgetView(nextSnapshot, now);
       });
     },
@@ -245,7 +255,8 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
           kind: 'ignore_imported_transaction',
           transactionId: input.transactionId,
         });
-        await storage.writeSnapshot(nextSnapshot);
+        const updatedTransaction = getTransactionById(nextSnapshot, input.transactionId);
+        await storage.updateTransaction(updatedTransaction);
         return deriveBudgetView(nextSnapshot, now);
       });
     },
@@ -267,19 +278,9 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
           },
         });
 
-        const nextSnapshot: BudgetSnapshot = {
-          ...snapshot,
-          transactions: importResult.candidateTransaction
-            ? [...snapshot.transactions, importResult.candidateTransaction]
-            : snapshot.transactions,
-          rawSmsMessages: [...snapshot.rawSmsMessages, importResult.rawSmsMessage],
-          smsParseResults: importResult.parseResult
-            ? [...snapshot.smsParseResults, importResult.parseResult]
-            : snapshot.smsParseResults,
-          importOutcomes: [...snapshot.importOutcomes, importResult.importOutcome],
-        };
+        const nextSnapshot = appendImportedSmsFactsToSnapshot(snapshot, importResult);
 
-        await storage.writeSnapshot(nextSnapshot);
+        await storage.appendImportedSmsFacts(importResult);
         return {
           budgetView: deriveBudgetView(nextSnapshot, now),
           parseResult: importResult.parseResult,
@@ -299,8 +300,24 @@ export function createMemoryBudgetStorage(initialSnapshot: BudgetSnapshot = EMPT
       return cloneSnapshot(snapshot);
     },
 
-    async writeSnapshot(nextSnapshot) {
+    async replaceSnapshot(nextSnapshot) {
       snapshot = cloneSnapshot(nextSnapshot);
+    },
+
+    async appendAssignmentEvents(events) {
+      snapshot = appendAssignmentEventsToSnapshot(snapshot, events);
+    },
+
+    async appendTransaction(transaction) {
+      snapshot = appendTransactionToSnapshot(snapshot, transaction);
+    },
+
+    async updateTransaction(transaction) {
+      snapshot = updateTransactionInSnapshot(snapshot, transaction);
+    },
+
+    async appendImportedSmsFacts(facts) {
+      snapshot = appendImportedSmsFactsToSnapshot(snapshot, facts);
     },
   };
 }
@@ -407,6 +424,74 @@ function compareImportOutcomesNewestFirst(
   right: BudgetSnapshot['importOutcomes'][number]
 ) {
   return right.createdAt.localeCompare(left.createdAt);
+}
+
+function appendAssignmentEventsToSnapshot(snapshot: BudgetSnapshot, events: AssignmentEvent[]): BudgetSnapshot {
+  return {
+    ...snapshot,
+    assignmentEvents: [...snapshot.assignmentEvents, ...events],
+  };
+}
+
+function appendTransactionToSnapshot(
+  snapshot: BudgetSnapshot,
+  transaction: CanonicalTransaction
+): BudgetSnapshot {
+  return {
+    ...snapshot,
+    transactions: [...snapshot.transactions, transaction],
+  };
+}
+
+function updateTransactionInSnapshot(
+  snapshot: BudgetSnapshot,
+  transaction: CanonicalTransaction
+): BudgetSnapshot {
+  const transactionIndex = snapshot.transactions.findIndex((entry) => entry.id === transaction.id);
+
+  if (transactionIndex < 0) {
+    throw new Error('Transaction does not exist.');
+  }
+
+  return {
+    ...snapshot,
+    transactions: snapshot.transactions.map((entry, index) => (index === transactionIndex ? transaction : entry)),
+  };
+}
+
+function appendImportedSmsFactsToSnapshot(snapshot: BudgetSnapshot, facts: ImportedSmsFacts): BudgetSnapshot {
+  return {
+    ...snapshot,
+    transactions: facts.candidateTransaction
+      ? [...snapshot.transactions, facts.candidateTransaction]
+      : snapshot.transactions,
+    rawSmsMessages: [...snapshot.rawSmsMessages, facts.rawSmsMessage],
+    smsParseResults: facts.parseResult ? [...snapshot.smsParseResults, facts.parseResult] : snapshot.smsParseResults,
+    importOutcomes: [...snapshot.importOutcomes, facts.importOutcome],
+  };
+}
+
+function getAppendedTransaction(snapshot: BudgetSnapshot, nextSnapshot: BudgetSnapshot): CanonicalTransaction {
+  const existingTransactionIds = new Set(snapshot.transactions.map((transaction) => transaction.id));
+  const appendedTransactions = nextSnapshot.transactions.filter(
+    (transaction) => !existingTransactionIds.has(transaction.id)
+  );
+
+  if (appendedTransactions.length !== 1) {
+    throw new Error('Expected exactly one appended transaction.');
+  }
+
+  return appendedTransactions[0];
+}
+
+function getTransactionById(snapshot: BudgetSnapshot, transactionId: string): CanonicalTransaction {
+  const transaction = snapshot.transactions.find((entry) => entry.id === transactionId);
+
+  if (!transaction) {
+    throw new Error('Transaction does not exist.');
+  }
+
+  return transaction;
 }
 
 function cloneSnapshot(snapshot: BudgetSnapshot): BudgetSnapshot {

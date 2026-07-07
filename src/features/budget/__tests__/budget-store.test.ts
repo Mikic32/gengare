@@ -1460,9 +1460,29 @@ function createDelayedWriteBudgetStorage(): BudgetStorage {
       return storage.readSnapshot();
     },
 
-    async writeSnapshot(snapshot) {
+    async replaceSnapshot(snapshot) {
       await Promise.resolve();
-      await storage.writeSnapshot(snapshot);
+      await storage.replaceSnapshot(snapshot);
+    },
+
+    async appendAssignmentEvents(events) {
+      await Promise.resolve();
+      await storage.appendAssignmentEvents(events);
+    },
+
+    async appendTransaction(transaction) {
+      await Promise.resolve();
+      await storage.appendTransaction(transaction);
+    },
+
+    async updateTransaction(transaction) {
+      await Promise.resolve();
+      await storage.updateTransaction(transaction);
+    },
+
+    async appendImportedSmsFacts(facts) {
+      await Promise.resolve();
+      await storage.appendImportedSmsFacts(facts);
     },
   };
 }
