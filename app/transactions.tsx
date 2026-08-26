@@ -3,8 +3,6 @@ import { Text } from '@/components/ui/text';
 import { BudgetStatCard, FormField } from '@/src/features/budget/app-components';
 import {
   centsToDecimalString,
-  createSampleDebugSmsBody,
-  formatImportOutcomeReason,
   getErrorMessage,
   parseDateInputToIso,
   parseRequiredPositiveAmountToCents,
@@ -12,10 +10,10 @@ import {
 import { budgetAppStore } from '@/src/features/budget/app-store';
 import { toLocalDateKey, toMonthKey } from '@/src/features/budget/budget-engine';
 import { formatCurrency } from '@/src/features/budget/money';
-import type { BudgetView, CanonicalTransaction, ImportOutcome } from '@/src/features/budget/types';
+import type { BudgetView, CanonicalTransaction } from '@/src/features/budget/types';
 import { router, Stack } from 'expo-router';
 import * as React from 'react';
-import { ActivityIndicator, Alert, ScrollView, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const SCREEN_OPTIONS = {
@@ -43,20 +41,11 @@ type CategoryOption = {
 export default function TransactionsScreen() {
   const [budgetView, setBudgetView] = React.useState<BudgetView | null>(null);
   const [transactions, setTransactions] = React.useState<CanonicalTransaction[]>([]);
-  const [inboxTransactions, setInboxTransactions] = React.useState<CanonicalTransaction[]>([]);
-  const [importOutcomes, setImportOutcomes] = React.useState<ImportOutcome[]>([]);
   const [draft, setDraft] = React.useState<TransactionDraft>(() => createEmptyDraft());
-  const [debugSmsSender, setDebugSmsSender] = React.useState('BANK');
-  const [debugSmsBody, setDebugSmsBody] = React.useState(createSampleDebugSmsBody);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
-  const [isImportingSms, setIsImportingSms] = React.useState(false);
-  const [reviewingTransactionId, setReviewingTransactionId] = React.useState<string | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [saveError, setSaveError] = React.useState<string | null>(null);
-  const [smsImportError, setSmsImportError] = React.useState<string | null>(null);
-  const [reviewError, setReviewError] = React.useState<string | null>(null);
-  const [reviewCategoryIds, setReviewCategoryIds] = React.useState<Record<string, string | null>>({});
 
   const categoryOptions = React.useMemo<CategoryOption[]>(() => {
     if (!budgetView) {
@@ -74,37 +63,6 @@ export default function TransactionsScreen() {
   const manualTransactions = React.useMemo(
     () => transactions.filter((transaction) => transaction.source === 'manual'),
     [transactions]
-  );
-
-  const importOutcomeByTransactionId = React.useMemo(() => {
-    return new Map(
-      importOutcomes
-        .filter((outcome) => outcome.candidateTransactionId !== null)
-        .map((outcome) => [outcome.candidateTransactionId as string, outcome])
-    );
-  }, [importOutcomes]);
-
-  const needsReviewTransactions = React.useMemo(
-    () =>
-      inboxTransactions.filter((transaction) => {
-        const outcome = importOutcomeByTransactionId.get(transaction.id);
-        return outcome?.kind !== 'possible_duplicate';
-      }),
-    [importOutcomeByTransactionId, inboxTransactions]
-  );
-
-  const duplicateTransactions = React.useMemo(
-    () =>
-      inboxTransactions.filter((transaction) => {
-        const outcome = importOutcomeByTransactionId.get(transaction.id);
-        return outcome?.kind === 'possible_duplicate';
-      }),
-    [importOutcomeByTransactionId, inboxTransactions]
-  );
-
-  const manualImportOutcomes = React.useMemo(
-    () => importOutcomes.filter((outcome) => outcome.kind === 'manual_import'),
-    [importOutcomes]
   );
 
   React.useEffect(() => {
@@ -134,14 +92,9 @@ export default function TransactionsScreen() {
     setLoadError(null);
 
     try {
-      const nextScreenData = await budgetAppStore.loadTransactionsScreenData(
-        new Date()
-      );
-
+      const nextScreenData = await budgetAppStore.loadTransactionsScreenData(new Date());
       setBudgetView(nextScreenData.budgetView);
       setTransactions(nextScreenData.transactions);
-      setInboxTransactions(nextScreenData.inboxTransactions);
-      setImportOutcomes(nextScreenData.importOutcomes);
     } catch (error) {
       setLoadError(getErrorMessage(error));
     } finally {
@@ -149,27 +102,12 @@ export default function TransactionsScreen() {
     }
   }
 
-  function applyScreenData(nextScreenData: {
-    budgetView: BudgetView | null;
-    transactions: CanonicalTransaction[];
-    inboxTransactions: CanonicalTransaction[];
-    importOutcomes: ImportOutcome[];
-  }) {
-    setBudgetView(nextScreenData.budgetView);
-    setTransactions(nextScreenData.transactions);
-    setInboxTransactions(nextScreenData.inboxTransactions);
-    setImportOutcomes(nextScreenData.importOutcomes);
-  }
-
   async function handleSubmit() {
     setIsSaving(true);
     setSaveError(null);
 
     try {
-      const amountCents = parseRequiredPositiveAmountToCents(
-        draft.amount,
-        'Transaction amount'
-      );
+      const amountCents = parseRequiredPositiveAmountToCents(draft.amount, 'Transaction amount');
       const occurredAt = parseDateInputToIso(draft.occurredOn);
       const input = {
         kind: draft.kind,
@@ -190,125 +128,18 @@ export default function TransactionsScreen() {
         new Date()
       );
 
-      applyScreenData(nextScreenData);
+      setBudgetView(nextScreenData.budgetView);
+      setTransactions(nextScreenData.transactions);
       setDraft(createEmptyDraft());
     } catch (error) {
       const message = getErrorMessage(error);
       setSaveError(message);
-      Alert.alert(draft.transactionId ? 'Could not update transaction' : 'Could not save transaction', message);
+      Alert.alert(
+        draft.transactionId ? 'Could not update transaction' : 'Could not save transaction',
+        message
+      );
     } finally {
       setIsSaving(false);
-    }
-  }
-
-  async function handleImportDebugSms() {
-    setIsImportingSms(true);
-    setSmsImportError(null);
-    setReviewError(null);
-
-    try {
-      const { importResult, screenData } = await budgetAppStore.importDebugSms(
-        {
-          sender: debugSmsSender,
-          body: debugSmsBody,
-          receivedAt: new Date().toISOString(),
-        },
-        new Date()
-      );
-      applyScreenData(screenData);
-
-      if (importResult.importOutcome.kind === 'ignored') {
-        const message =
-          importResult.importOutcome.reason === 'sender_not_allowed'
-            ? 'SMS sender is not on the allowlist.'
-            : 'SMS happened before tracking started and was ignored.';
-        setSmsImportError(message);
-        Alert.alert('SMS ignored', message);
-        return;
-      }
-
-      if (importResult.importOutcome.kind === 'manual_import') {
-        const message = importResult.parseResult?.memo ?? 'SMS was saved, but parsing failed.';
-        setSmsImportError(message);
-        Alert.alert('SMS saved but not parsed', message);
-        return;
-      }
-
-      if (importResult.importOutcome.kind === 'possible_duplicate') {
-        Alert.alert(
-          'SMS flagged as possible duplicate',
-          'The SMS was imported as a review candidate and flagged as a possible duplicate.'
-        );
-      }
-
-      setDebugSmsBody(createSampleDebugSmsBody());
-    } catch (error) {
-      const message = getErrorMessage(error);
-      setSmsImportError(message);
-      Alert.alert('Could not import debug SMS', message);
-    } finally {
-      setIsImportingSms(false);
-    }
-  }
-
-  async function handleApproveImportedTransaction(transaction: CanonicalTransaction) {
-    setReviewingTransactionId(transaction.id);
-    setReviewError(null);
-    setSmsImportError(null);
-
-    try {
-      const categoryId =
-        transaction.kind === 'outflow'
-          ? reviewCategoryIds[transaction.id] ?? categoryOptions[0]?.id ?? null
-          : null;
-      const nextScreenData = await budgetAppStore.approveImportedTransaction(
-        {
-          transactionId: transaction.id,
-          categoryId,
-        },
-        new Date()
-      );
-
-      applyScreenData(nextScreenData);
-      setReviewCategoryIds((current) => {
-        const next = { ...current };
-        delete next[transaction.id];
-        return next;
-      });
-    } catch (error) {
-      const message = getErrorMessage(error);
-      setReviewError(message);
-      Alert.alert('Could not approve transaction', message);
-    } finally {
-      setReviewingTransactionId(null);
-    }
-  }
-
-  async function handleIgnoreImportedTransaction(transaction: CanonicalTransaction) {
-    setReviewingTransactionId(transaction.id);
-    setReviewError(null);
-    setSmsImportError(null);
-
-    try {
-      const nextScreenData = await budgetAppStore.ignoreImportedTransaction(
-        {
-          transactionId: transaction.id,
-        },
-        new Date()
-      );
-
-      applyScreenData(nextScreenData);
-      setReviewCategoryIds((current) => {
-        const next = { ...current };
-        delete next[transaction.id];
-        return next;
-      });
-    } catch (error) {
-      const message = getErrorMessage(error);
-      setReviewError(message);
-      Alert.alert('Could not ignore transaction', message);
-    } finally {
-      setReviewingTransactionId(null);
     }
   }
 
@@ -394,76 +225,45 @@ export default function TransactionsScreen() {
                 Manual ledger for <Text variant="code">{budgetView.monthKey}</Text>
               </Text>
             </View>
-            <Button size="sm" variant="outline" onPress={() => router.replace('/')}>
-              <Text>Budget</Text>
-            </Button>
+            <View className="flex-row gap-2">
+              <Button size="sm" variant="outline" onPress={() => router.replace('/')}>
+                <Text>Budget</Text>
+              </Button>
+              <Button size="sm" variant="outline" onPress={() => router.push('./inbox')}>
+                <Text>Inbox</Text>
+              </Button>
+            </View>
           </View>
 
           <View className="gap-3">
             <BudgetStatCard
               label="Ready to assign"
-              value={formatCurrency(budgetView.moneyState.assignableCash.amountCents, budgetView.currencyCode)}
+              value={formatCurrency(
+                budgetView.moneyState.assignableCash.amountCents,
+                budgetView.currencyCode
+              )}
               helper="Approved uncategorized inflows land here until you assign them."
-              valueClassName={budgetView.moneyState.assignableCash.amountCents < 0 ? 'text-destructive' : undefined}
+              valueClassName={
+                budgetView.moneyState.assignableCash.amountCents < 0
+                  ? 'text-destructive'
+                  : undefined
+              }
             />
             <BudgetStatCard
               label="Account balance"
-              value={formatCurrency(budgetView.moneyState.accountBalance.amountCents, budgetView.currencyCode)}
+              value={formatCurrency(
+                budgetView.moneyState.accountBalance.amountCents,
+                budgetView.currencyCode
+              )}
               helper="Newest non-ignored bank balance evidence."
             />
           </View>
 
           <View className="gap-4 rounded-2xl border border-border bg-card p-4">
-            <View className="gap-1">
-              <Text variant="large">Debug SMS import</Text>
-              <Text className="text-sm text-muted-foreground">
-                Paste a sample bank SMS and run it through the real import pipeline.
-              </Text>
-            </View>
-
-            <FormField
-              label="Sender"
-              value={debugSmsSender}
-              onChangeText={setDebugSmsSender}
-              placeholder="BANK"
-              autoCapitalize="characters"
-            />
-
-            <View className="gap-2">
-              <Text className="text-sm font-medium">SMS body</Text>
-              <TextInput
-                className="min-h-32 rounded-xl border border-border bg-background px-4 py-3 text-foreground"
-                value={debugSmsBody}
-                onChangeText={setDebugSmsBody}
-                placeholder={createSampleDebugSmsBody()}
-                placeholderTextColor="#71717a"
-                multiline
-                textAlignVertical="top"
-                autoCapitalize="none"
-              />
-            </View>
-
-            <View className="rounded-xl bg-muted/40 p-3">
-              <Text className="text-sm text-muted-foreground">
-                Supported sample: OTP banka multiline `Priliv` / `Odliv` SMS with `Datum`, `Vreme`, and
-                `Raspoloziva sredstva`.
-              </Text>
-            </View>
-
-            {smsImportError ? (
-              <View className="rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
-                <Text className="text-destructive">{smsImportError}</Text>
-              </View>
-            ) : null}
-
-            <Button onPress={() => void handleImportDebugSms()} disabled={isImportingSms}>
-              <Text>{isImportingSms ? 'Importing SMS…' : 'Import debug SMS'}</Text>
-            </Button>
-          </View>
-
-          <View className="gap-4 rounded-2xl border border-border bg-card p-4">
             <View className="flex-row items-center justify-between gap-3">
-              <Text variant="large">{draft.transactionId ? 'Edit transaction' : 'Add transaction'}</Text>
+              <Text variant="large">
+                {draft.transactionId ? 'Edit transaction' : 'Add transaction'}
+              </Text>
               {draft.transactionId ? (
                 <Button size="sm" variant="ghost" onPress={() => setDraft(createEmptyDraft())}>
                   <Text>Cancel</Text>
@@ -560,111 +360,14 @@ export default function TransactionsScreen() {
             ) : null}
 
             <Button onPress={() => void handleSubmit()} disabled={isSaving}>
-              <Text>{isSaving ? 'Saving transaction…' : draft.transactionId ? 'Update transaction' : 'Save transaction'}</Text>
+              <Text>
+                {isSaving
+                  ? 'Saving transaction…'
+                  : draft.transactionId
+                    ? 'Update transaction'
+                    : 'Save transaction'}
+              </Text>
             </Button>
-          </View>
-
-          <View className="gap-3">
-            {reviewError ? (
-              <View className="rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
-                <Text className="text-destructive">{reviewError}</Text>
-              </View>
-            ) : null}
-
-            <Text variant="large">Needs review</Text>
-            {needsReviewTransactions.length === 0 ? (
-              <View className="rounded-2xl border border-border bg-card p-4">
-                <Text className="text-muted-foreground">
-                  No SMS candidates need review yet. Import a debug SMS above.
-                </Text>
-              </View>
-            ) : (
-              needsReviewTransactions.map((transaction) => (
-                <ReviewTransactionCard
-                  key={transaction.id}
-                  transaction={transaction}
-                  currencyCode={budgetView.currencyCode}
-                  badgeLabel="Needs review"
-                  subtitle="Waiting for review"
-                  helperText="This candidate updates account balance evidence but does not touch category math until approval."
-                  categoryOptions={categoryOptions}
-                  selectedCategoryId={reviewCategoryIds[transaction.id] ?? categoryOptions[0]?.id ?? null}
-                  isSubmitting={reviewingTransactionId === transaction.id}
-                  onSelectCategory={(categoryId) =>
-                    setReviewCategoryIds((current) => ({
-                      ...current,
-                      [transaction.id]: categoryId,
-                    }))
-                  }
-                  onApprove={() => void handleApproveImportedTransaction(transaction)}
-                  onIgnore={() => void handleIgnoreImportedTransaction(transaction)}
-                />
-              ))
-            )}
-          </View>
-
-          <View className="gap-3">
-            <Text variant="large">Possible duplicates</Text>
-            {duplicateTransactions.length === 0 ? (
-              <View className="rounded-2xl border border-border bg-card p-4">
-                <Text className="text-muted-foreground">
-                  No duplicate-looking SMS imports right now.
-                </Text>
-              </View>
-            ) : (
-              duplicateTransactions.map((transaction) => (
-                <ReviewTransactionCard
-                  key={transaction.id}
-                  transaction={transaction}
-                  currencyCode={budgetView.currencyCode}
-                  badgeLabel="Possible duplicate"
-                  subtitle="Review possible duplicate"
-                  helperText="This candidate updates account balance evidence but was flagged as a possible duplicate."
-                  categoryOptions={categoryOptions}
-                  selectedCategoryId={reviewCategoryIds[transaction.id] ?? categoryOptions[0]?.id ?? null}
-                  isSubmitting={reviewingTransactionId === transaction.id}
-                  onSelectCategory={(categoryId) =>
-                    setReviewCategoryIds((current) => ({
-                      ...current,
-                      [transaction.id]: categoryId,
-                    }))
-                  }
-                  onApprove={() => void handleApproveImportedTransaction(transaction)}
-                  onIgnore={() => void handleIgnoreImportedTransaction(transaction)}
-                />
-              ))
-            )}
-          </View>
-
-          <View className="gap-3">
-            <Text variant="large">Needs manual import</Text>
-            {manualImportOutcomes.length === 0 ? (
-              <View className="rounded-2xl border border-border bg-card p-4">
-                <Text className="text-muted-foreground">
-                  No unparseable SMS imports waiting for manual recovery.
-                </Text>
-              </View>
-            ) : (
-              manualImportOutcomes.map((outcome) => (
-                <View key={outcome.id} className="gap-3 rounded-2xl border border-border bg-card p-4">
-                  <View className="flex-row items-start justify-between gap-3">
-                    <View className="flex-1 gap-1">
-                      <Text className="font-semibold">Manual import needed</Text>
-                      <Text className="text-sm text-muted-foreground">
-                        Parser could not turn this SMS into a canonical transaction.
-                      </Text>
-                    </View>
-                    <Text className="text-xs uppercase text-amber-600">Manual import</Text>
-                  </View>
-
-                  <View className="gap-1 rounded-xl bg-muted/40 p-3">
-                    <Text className="text-sm text-muted-foreground">
-                      Outcome reason: <Text className="font-medium text-foreground">{formatImportOutcomeReason(outcome.reason)}</Text>
-                    </Text>
-                  </View>
-                </View>
-              ))
-            )}
           </View>
 
           <View className="gap-3">
@@ -678,25 +381,38 @@ export default function TransactionsScreen() {
             ) : (
               manualTransactions.map((transaction) => {
                 const categoryLabel = transaction.categoryId
-                  ? categoryOptions.find((category) => category.id === transaction.categoryId)?.label ?? 'Unknown category'
+                  ? (categoryOptions.find((category) => category.id === transaction.categoryId)
+                      ?.label ?? 'Unknown category')
                   : 'Assignable cash';
 
                 return (
-                  <View key={transaction.id} className="gap-3 rounded-2xl border border-border bg-card p-4">
+                  <View
+                    key={transaction.id}
+                    className="gap-3 rounded-2xl border border-border bg-card p-4">
                     <View className="flex-row items-start justify-between gap-3">
                       <View className="flex-1 gap-1">
                         <Text className="font-semibold">
-                          {transaction.payee ?? (transaction.kind === 'inflow' ? 'Manual inflow' : 'Manual outflow')}
+                          {transaction.payee ??
+                            (transaction.kind === 'inflow' ? 'Manual inflow' : 'Manual outflow')}
                         </Text>
                         <Text className="text-sm text-muted-foreground">
-                          {toLocalDateKey(transaction.occurredAt)} · Budget month {toMonthKey(transaction.occurredAt)}
+                          {toLocalDateKey(transaction.occurredAt)} · Budget month{' '}
+                          {toMonthKey(transaction.occurredAt)}
                         </Text>
                       </View>
                       <View className="items-end gap-2">
-                        <Text className={transaction.amountCents < 0 ? 'font-semibold text-destructive' : 'font-semibold'}>
+                        <Text
+                          className={
+                            transaction.amountCents < 0
+                              ? 'font-semibold text-destructive'
+                              : 'font-semibold'
+                          }>
                           {formatCurrency(transaction.amountCents, budgetView.currencyCode)}
                         </Text>
-                        <Button size="sm" variant="outline" onPress={() => startEditing(transaction)}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onPress={() => startEditing(transaction)}>
                           <Text>Edit</Text>
                         </Button>
                       </View>
@@ -709,7 +425,9 @@ export default function TransactionsScreen() {
                           ? 'Increases assignable cash for this transaction month.'
                           : 'Reduces category availability in this transaction month.'}
                       </Text>
-                      {transaction.memo ? <Text className="text-sm text-muted-foreground">{transaction.memo}</Text> : null}
+                      {transaction.memo ? (
+                        <Text className="text-sm text-muted-foreground">{transaction.memo}</Text>
+                      ) : null}
                     </View>
                   </View>
                 );
@@ -719,99 +437,6 @@ export default function TransactionsScreen() {
         </ScrollView>
       </SafeAreaView>
     </>
-  );
-}
-
-function ReviewTransactionCard({
-  transaction,
-  currencyCode,
-  badgeLabel,
-  subtitle,
-  helperText,
-  categoryOptions,
-  selectedCategoryId,
-  isSubmitting,
-  onSelectCategory,
-  onApprove,
-  onIgnore,
-}: {
-  transaction: CanonicalTransaction;
-  currencyCode: string;
-  badgeLabel: string;
-  subtitle: string;
-  helperText: string;
-  categoryOptions: CategoryOption[];
-  selectedCategoryId: string | null;
-  isSubmitting: boolean;
-  onSelectCategory: (categoryId: string) => void;
-  onApprove: () => void;
-  onIgnore: () => void;
-}) {
-  const isOutflow = transaction.kind === 'outflow';
-
-  return (
-    <View className="gap-3 rounded-2xl border border-border bg-card p-4">
-      <View className="flex-row items-start justify-between gap-3">
-        <View className="flex-1 gap-1">
-          <Text className="font-semibold">
-            {transaction.payee ?? (transaction.kind === 'inflow' ? 'SMS inflow' : 'SMS outflow')}
-          </Text>
-          <Text className="text-sm text-muted-foreground">
-            {toLocalDateKey(transaction.occurredAt)} · {subtitle}
-          </Text>
-        </View>
-        <View className="items-end gap-1">
-          <Text className={transaction.amountCents < 0 ? 'font-semibold text-destructive' : 'font-semibold'}>
-            {formatCurrency(transaction.amountCents, currencyCode)}
-          </Text>
-          <Text className="text-xs uppercase text-amber-600">{badgeLabel}</Text>
-        </View>
-      </View>
-
-      <View className="gap-1 rounded-xl bg-muted/40 p-3">
-        <Text className="text-sm text-muted-foreground">
-          Balance after import:{' '}
-          <Text className="font-medium text-foreground">
-            {transaction.balanceAfterCents === null ? 'Unknown' : formatCurrency(transaction.balanceAfterCents, currencyCode)}
-          </Text>
-        </Text>
-        <Text className="text-sm text-muted-foreground">{helperText}</Text>
-        {transaction.memo ? <Text className="text-sm text-muted-foreground">{transaction.memo}</Text> : null}
-      </View>
-
-      {isOutflow ? (
-        <View className="gap-2">
-          <Text className="text-sm font-medium">Approval category</Text>
-          <View className="flex-row flex-wrap gap-2">
-            {categoryOptions.map((category) => (
-              <Button
-                key={category.id}
-                size="sm"
-                variant={selectedCategoryId === category.id ? 'secondary' : 'outline'}
-                onPress={() => onSelectCategory(category.id)}
-                disabled={isSubmitting}>
-                <Text>{category.label}</Text>
-              </Button>
-            ))}
-          </View>
-        </View>
-      ) : (
-        <View className="rounded-xl bg-muted/40 p-3">
-          <Text className="text-sm text-muted-foreground">
-            Approving this inflow keeps it uncategorized and increases assignable cash.
-          </Text>
-        </View>
-      )}
-
-      <View className="flex-row gap-2">
-        <Button variant="outline" onPress={onIgnore} disabled={isSubmitting}>
-          <Text>{isSubmitting ? 'Working…' : 'Ignore'}</Text>
-        </Button>
-        <Button onPress={onApprove} disabled={isSubmitting}>
-          <Text>{isSubmitting ? 'Working…' : 'Approve'}</Text>
-        </Button>
-      </View>
-    </View>
   );
 }
 
@@ -826,4 +451,3 @@ function createEmptyDraft(): TransactionDraft {
     memo: '',
   };
 }
-

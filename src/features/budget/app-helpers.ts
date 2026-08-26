@@ -11,10 +11,19 @@ export function getErrorMessage(error: unknown) {
   return 'Unknown error';
 }
 
-export function parseRequiredPositiveAmountToCents(
-  value: string,
-  label: string
-) {
+export function parseOptionalBalanceAfterToCents(value: string) {
+  if (!value.trim()) {
+    return null;
+  }
+
+  try {
+    return parseDecimalMoneyToCents(value);
+  } catch {
+    throw new Error('Balance after must be a valid amount.');
+  }
+}
+
+export function parseRequiredPositiveAmountToCents(value: string, label: string) {
   if (!value.trim()) {
     throw new Error(`${label} is required.`);
   }

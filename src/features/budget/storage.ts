@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
 
-import type { BudgetStorage, ImportedSmsFacts } from './store';
+import type { BudgetStorage, ImportedSmsFacts, RecoveredUnparseableSmsFacts } from './store';
 import type {
   Account,
   AssignmentEvent,
@@ -114,7 +114,9 @@ function createSQLiteBudgetStorage(): BudgetStorage {
       const db = await getDatabase();
       await ensureSchema(db);
 
-      const [accountRow] = await db.getAllAsync<AccountRow>('SELECT id, name, currency_code, created_at FROM accounts LIMIT 1');
+      const [accountRow] = await db.getAllAsync<AccountRow>(
+        'SELECT id, name, currency_code, created_at FROM accounts LIMIT 1'
+      );
       const categoryGroupRows = await db.getAllAsync<CategoryGroupRow>(
         'SELECT id, name, sort_order, created_at FROM category_groups ORDER BY sort_order ASC'
       );
@@ -331,6 +333,21 @@ function createSQLiteBudgetStorage(): BudgetStorage {
         await insertImportOutcome(db, facts.importOutcome);
       });
     },
+
+    async appendRecoveredUnparseableSmsFacts(facts) {
+      const db = await getDatabase();
+      await ensureSchema(db);
+      await db.withTransactionAsync(async () => {
+        await insertTransaction(db, facts.transaction);
+        await updateImportOutcomeRow(db, facts.importOutcome);
+      });
+    },
+
+    async updateImportOutcome(outcome) {
+      const db = await getDatabase();
+      await ensureSchema(db);
+      await updateImportOutcomeRow(db, outcome);
+    },
   };
 }
 
@@ -374,12 +391,24 @@ function createWebBudgetStorage(): BudgetStorage {
     async updateTransaction(transaction) {
       await updateWebSnapshot((snapshot) => ({
         ...snapshot,
-        transactions: snapshot.transactions.map((entry) => (entry.id === transaction.id ? transaction : entry)),
+        transactions: snapshot.transactions.map((entry) =>
+          entry.id === transaction.id ? transaction : entry
+        ),
       }));
     },
 
     async appendImportedSmsFacts(facts) {
       await updateWebSnapshot((snapshot) => appendImportedSmsFactsToSnapshot(snapshot, facts));
+    },
+
+    async appendRecoveredUnparseableSmsFacts(facts) {
+      await updateWebSnapshot((snapshot) =>
+        appendRecoveredUnparseableSmsFactsToSnapshot(snapshot, facts)
+      );
+    },
+
+    async updateImportOutcome(outcome) {
+      await updateWebSnapshot((snapshot) => updateImportOutcomeInSnapshot(snapshot, outcome));
     },
   };
 }
@@ -668,27 +697,72 @@ async function insertImportOutcome(db: SQLiteDatabase, importOutcome: ImportOutc
   );
 }
 
-async function updateWebSnapshot(
-  update: (snapshot: BudgetSnapshot) => BudgetSnapshot
-) {
+async function updateWebSnapshot(update: (snapshot: BudgetSnapshot) => BudgetSnapshot) {
   if (typeof localStorage === 'undefined') {
     return;
   }
 
   const rawSnapshot = localStorage.getItem(WEB_STORAGE_KEY);
-  const snapshot = rawSnapshot ? normalizeSnapshot(JSON.parse(rawSnapshot) as Partial<BudgetSnapshot>) : emptySnapshot();
+  const snapshot = rawSnapshot
+    ? normalizeSnapshot(JSON.parse(rawSnapshot) as Partial<BudgetSnapshot>)
+    : emptySnapshot();
   const nextSnapshot = update(snapshot);
   localStorage.setItem(WEB_STORAGE_KEY, JSON.stringify(nextSnapshot));
 }
 
-function appendImportedSmsFactsToSnapshot(snapshot: BudgetSnapshot, facts: ImportedSmsFacts): BudgetSnapshot {
+function appendImportedSmsFactsToSnapshot(
+  snapshot: BudgetSnapshot,
+  facts: ImportedSmsFacts
+): BudgetSnapshot {
   return {
     ...snapshot,
     transactions: facts.candidateTransaction
       ? [...snapshot.transactions, facts.candidateTransaction]
       : snapshot.transactions,
     rawSmsMessages: [...snapshot.rawSmsMessages, facts.rawSmsMessage],
-    smsParseResults: facts.parseResult ? [...snapshot.smsParseResults, facts.parseResult] : snapshot.smsParseResults,
+    smsParseResults: facts.parseResult
+      ? [...snapshot.smsParseResults, facts.parseResult]
+      : snapshot.smsParseResults,
     importOutcomes: [...snapshot.importOutcomes, facts.importOutcome],
   };
+}
+
+function appendRecoveredUnparseableSmsFactsToSnapshot(
+  snapshot: BudgetSnapshot,
+  facts: RecoveredUnparseableSmsFacts
+): BudgetSnapshot {
+  return {
+    ...snapshot,
+    transactions: [...snapshot.transactions, facts.transaction],
+    importOutcomes: snapshot.importOutcomes.map((entry) =>
+      entry.id === facts.importOutcome.id ? facts.importOutcome : entry
+    ),
+  };
+}
+
+function updateImportOutcomeInSnapshot(
+  snapshot: BudgetSnapshot,
+  outcome: ImportOutcome
+): BudgetSnapshot {
+  return {
+    ...snapshot,
+    importOutcomes: snapshot.importOutcomes.map((entry) =>
+      entry.id === outcome.id ? outcome : entry
+    ),
+  };
+}
+
+async function updateImportOutcomeRow(db: SQLiteDatabase, importOutcome: ImportOutcome) {
+  await db.runAsync(
+    `UPDATE import_outcomes
+     SET raw_sms_message_id = ?, parse_result_id = ?, kind = ?, candidate_transaction_id = ?, reason = ?, created_at = ?
+     WHERE id = ?`,
+    importOutcome.rawSmsMessageId,
+    importOutcome.parseResultId,
+    importOutcome.kind,
+    importOutcome.candidateTransactionId,
+    importOutcome.reason,
+    importOutcome.createdAt,
+    importOutcome.id
+  );
 }

@@ -129,6 +129,67 @@ describe('budget storage seam', () => {
       memo: 'Seed memo',
     });
   });
+
+  it('appends a recovered unparseable SMS transaction without rewriting raw evidence', async () => {
+    const initialSnapshot = createUnparseableSmsSnapshot();
+    const storage = createMemoryBudgetStorage(initialSnapshot);
+    const originalRawSms = initialSnapshot.rawSmsMessages[0];
+    const recoveredTransaction: CanonicalTransaction = {
+      id: 'transaction-2',
+      accountId: initialSnapshot.account?.id ?? 'missing-account',
+      source: 'sms',
+      kind: 'outflow',
+      status: 'approved',
+      amountCents: -15_000,
+      occurredAt: '2026-06-25T10:30:00.000Z',
+      categoryId: initialSnapshot.categories[0].id,
+      balanceAfterCents: 110_500,
+      payee: 'Market',
+      memo: 'Recovered from garbled SMS',
+      createdAt: '2026-06-25T11:00:00.000Z',
+    };
+
+    await storage.appendRecoveredUnparseableSmsFacts({
+      transaction: recoveredTransaction,
+      importOutcome: {
+        ...initialSnapshot.importOutcomes[0],
+        candidateTransactionId: recoveredTransaction.id,
+      },
+    });
+
+    const snapshot = await storage.readSnapshot();
+    expect(snapshot.rawSmsMessages[0]).toEqual(originalRawSms);
+    expect(snapshot.smsParseResults[0]).toEqual(initialSnapshot.smsParseResults[0]);
+    expect(snapshot.importOutcomes[0]).toMatchObject({
+      kind: 'manual_import',
+      candidateTransactionId: 'transaction-2',
+    });
+    expect(snapshot.transactions.at(-1)).toMatchObject({
+      id: 'transaction-2',
+      source: 'sms',
+      status: 'approved',
+    });
+  });
+
+  it('updates an import outcome in place without deleting SMS evidence', async () => {
+    const initialSnapshot = createUnparseableSmsSnapshot();
+    const storage = createMemoryBudgetStorage(initialSnapshot);
+
+    await storage.updateImportOutcome({
+      ...initialSnapshot.importOutcomes[0],
+      kind: 'ignored',
+    });
+
+    const snapshot = await storage.readSnapshot();
+    expect(snapshot.rawSmsMessages).toEqual(initialSnapshot.rawSmsMessages);
+    expect(snapshot.smsParseResults).toEqual(initialSnapshot.smsParseResults);
+    expect(snapshot.transactions).toEqual(initialSnapshot.transactions);
+    expect(snapshot.importOutcomes[0]).toMatchObject({
+      kind: 'ignored',
+      reason: 'unparseable',
+      candidateTransactionId: null,
+    });
+  });
 });
 
 function createOnboardedSnapshot() {
@@ -147,4 +208,49 @@ function createOnboardedSnapshot() {
     },
     new Date('2026-06-24T10:00:00.000Z')
   );
+}
+
+function createUnparseableSmsSnapshot() {
+  const onboardedSnapshot = createOnboardedSnapshot();
+
+  return {
+    ...onboardedSnapshot,
+    rawSmsMessages: [
+      {
+        id: 'raw-sms-1',
+        sender: 'BANK',
+        body: 'Garbled OTP banka SMS',
+        receivedAt: '2026-06-25T10:31:00.000Z',
+        createdAt: '2026-06-25T10:31:00.000Z',
+      },
+    ],
+    smsParseResults: [
+      {
+        id: 'sms-parse-1',
+        rawSmsMessageId: 'raw-sms-1',
+        parserId: 'debug-bank-sms',
+        parserVersion: 1,
+        status: 'unparseable' as const,
+        transactionId: null,
+        kind: null,
+        amountCents: null,
+        occurredAt: null,
+        balanceAfterCents: null,
+        payee: null,
+        memo: 'invalid occurred-at timestamp',
+        createdAt: '2026-06-25T10:31:00.000Z',
+      },
+    ],
+    importOutcomes: [
+      {
+        id: 'import-outcome-1',
+        rawSmsMessageId: 'raw-sms-1',
+        parseResultId: 'sms-parse-1',
+        kind: 'manual_import' as const,
+        candidateTransactionId: null,
+        reason: 'unparseable' as const,
+        createdAt: '2026-06-25T10:31:00.000Z',
+      },
+    ],
+  };
 }

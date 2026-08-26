@@ -8,7 +8,9 @@ describe('budget store bootstrap', () => {
   it('returns null before onboarding exists', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
 
-    await expect(store.getCurrentBudgetView(new Date('2026-06-24T10:00:00.000Z'))).resolves.toBeNull();
+    await expect(
+      store.getCurrentBudgetView(new Date('2026-06-24T10:00:00.000Z'))
+    ).resolves.toBeNull();
   });
 
   it('persists onboarding data and derives the current month budget shell', async () => {
@@ -554,6 +556,147 @@ describe('budget store bootstrap', () => {
     });
   });
 
+  it('recovers an unparseable SMS into an approved transaction while keeping raw evidence', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+    const groceriesCategoryId = initialView.categoryGroups[0].categories[0].id;
+
+    const importResult = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 31.02.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-06-25T10:31:00.000Z',
+      },
+      new Date('2026-06-25T10:31:00.000Z')
+    );
+
+    const recoveredView = await store.recoverUnparseableSms(
+      {
+        importOutcomeId: importResult.importOutcome.id,
+        transaction: {
+          kind: 'outflow',
+          amountCents: 15_000,
+          occurredAt: '2026-06-25T10:30:00.000Z',
+          categoryId: groceriesCategoryId,
+          payee: 'Market',
+          memo: 'Recovered from garbled SMS',
+          balanceAfterCents: 110_500,
+        },
+      },
+      new Date('2026-06-25T11:00:00.000Z')
+    );
+
+    expectAccountBalance(recoveredView, 110_500);
+    expect(recoveredView.categoryGroups[0].categories[0]).toMatchObject({
+      activityCents: -15_000,
+      availableCents: -15_000,
+    });
+
+    const transactions = await store.getTransactions();
+    expect(transactions[0]).toMatchObject({
+      source: 'sms',
+      status: 'approved',
+      kind: 'outflow',
+      amountCents: -15_000,
+      categoryId: groceriesCategoryId,
+      balanceAfterCents: 110_500,
+    });
+    await expect(store.getInboxTransactions()).resolves.toEqual([]);
+
+    const rawSmsMessages = await store.getRawSmsMessages();
+    const parseResults = await store.getSmsParseResults();
+    const importOutcomes = await store.getImportOutcomes();
+    expect(rawSmsMessages[0].body).toContain('31.02.2026');
+    expect(parseResults[0]).toMatchObject({
+      status: 'unparseable',
+      transactionId: null,
+      kind: null,
+      amountCents: null,
+    });
+    expect(importOutcomes[0]).toMatchObject({
+      kind: 'manual_import',
+      reason: 'unparseable',
+      candidateTransactionId: transactions[0].id,
+    });
+  });
+
+  it('ignores an unparseable SMS and drops it from inbox without deleting evidence', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const importResult = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: [
+          'Datum: 31.02.2026, Vreme: 03:24:04',
+          'Tekuci racun: 93005***84',
+          'Odliv: 1.568,80 RSD',
+          'Raspoloziva sredstva: 4.527,55 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-06-25T10:31:00.000Z',
+      },
+      new Date('2026-06-25T10:31:00.000Z')
+    );
+
+    const ignoredView = await store.ignoreUnparseableSms(
+      {
+        importOutcomeId: importResult.importOutcome.id,
+      },
+      new Date('2026-06-25T11:00:00.000Z')
+    );
+
+    expectAccountBalance(ignoredView, 125_500);
+    expectAssignableCash(ignoredView, 125_500);
+    await expect(store.getInboxTransactions()).resolves.toEqual([]);
+    await expect(store.getTransactions()).resolves.toHaveLength(1);
+
+    const parseResults = await store.getSmsParseResults();
+    const importOutcomes = await store.getImportOutcomes();
+    expect(parseResults[0]).toMatchObject({
+      status: 'unparseable',
+      transactionId: null,
+    });
+    expect(importOutcomes[0]).toMatchObject({
+      kind: 'ignored',
+      reason: 'unparseable',
+      candidateTransactionId: null,
+    });
+  });
+
   it('approves imported outflows into the transaction month instead of the review month', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
 
@@ -810,7 +953,9 @@ describe('budget store bootstrap', () => {
     ).rejects.toThrow(/already approved SMS import/);
 
     const transactions = await store.getTransactions();
-    const approvedOriginal = transactions.find((transaction) => transaction.id === originalTransaction?.id);
+    const approvedOriginal = transactions.find(
+      (transaction) => transaction.id === originalTransaction?.id
+    );
     const duplicateTransaction = transactions.find(
       (transaction) => transaction.id === duplicateImport.transaction?.id
     );
@@ -1510,7 +1655,10 @@ describe('budget engine month math', () => {
 });
 
 function expectAccountBalance(
-  view: { moneyState: { accountBalance: { amountCents: number; derivedFrom: string } } } | null | undefined,
+  view:
+    | { moneyState: { accountBalance: { amountCents: number; derivedFrom: string } } }
+    | null
+    | undefined,
   amountCents: number
 ) {
   expect(view?.moneyState.accountBalance).toEqual({
@@ -1520,7 +1668,10 @@ function expectAccountBalance(
 }
 
 function expectAssignableCash(
-  view: { moneyState: { assignableCash: { amountCents: number; derivedFrom: string } } } | null | undefined,
+  view:
+    | { moneyState: { assignableCash: { amountCents: number; derivedFrom: string } } }
+    | null
+    | undefined,
   amountCents: number
 ) {
   expect(view?.moneyState.assignableCash).toEqual({
@@ -1560,6 +1711,16 @@ function createDelayedWriteBudgetStorage(): BudgetStorage {
     async appendImportedSmsFacts(facts) {
       await Promise.resolve();
       await storage.appendImportedSmsFacts(facts);
+    },
+
+    async appendRecoveredUnparseableSmsFacts(facts) {
+      await Promise.resolve();
+      await storage.appendRecoveredUnparseableSmsFacts(facts);
+    },
+
+    async updateImportOutcome(outcome) {
+      await Promise.resolve();
+      await storage.updateImportOutcome(outcome);
     },
   };
 }

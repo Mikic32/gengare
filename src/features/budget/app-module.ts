@@ -11,24 +11,43 @@ import type {
   CanonicalTransaction,
   CompleteOnboardingInput,
   IgnoreImportedTransactionInput,
+  IgnoreUnparseableSmsInput,
   ImportOutcome,
   ManualTransactionInput,
+  RawSmsMessage,
+  RecoverUnparseableSmsInput,
+  SmsParseResult,
   UpdateManualTransactionInput,
 } from './types';
 
 export type TransactionsScreenData = {
   budgetView: BudgetView | null;
   transactions: CanonicalTransaction[];
-  inboxTransactions: CanonicalTransaction[];
-  importOutcomes: ImportOutcome[];
+};
+
+export type ManualImportTask = {
+  importOutcome: ImportOutcome;
+  rawSmsMessage: RawSmsMessage;
+  parseResult: SmsParseResult | null;
+};
+
+export type InboxScreenData = {
+  budgetView: BudgetView | null;
+  needsReview: CanonicalTransaction[];
+  possibleDuplicates: CanonicalTransaction[];
+  manualImportTasks: ManualImportTask[];
 };
 
 export type BudgetAppStore = {
   getBudgetView(now?: Date): Promise<BudgetView | null>;
   completeOnboarding(input: CompleteOnboardingInput, now?: Date): Promise<BudgetView>;
   assignMoneyToCategory(input: AssignMoneyToCategoryInput, now?: Date): Promise<BudgetView>;
-  moveMoneyBetweenCategories(input: MoveMoneyBetweenCategoriesInput, now?: Date): Promise<BudgetView>;
+  moveMoneyBetweenCategories(
+    input: MoveMoneyBetweenCategoriesInput,
+    now?: Date
+  ): Promise<BudgetView>;
   loadTransactionsScreenData(now?: Date): Promise<TransactionsScreenData>;
+  loadInboxScreenData(now?: Date): Promise<InboxScreenData>;
   saveManualTransaction(
     input: ManualTransactionInput | UpdateManualTransactionInput,
     now?: Date
@@ -38,34 +57,47 @@ export type BudgetAppStore = {
     now?: Date
   ): Promise<{
     importResult: DebugSmsImportResult;
-    screenData: TransactionsScreenData;
+    screenData: InboxScreenData;
   }>;
   approveImportedTransaction(
     input: ApproveImportedTransactionInput,
     now?: Date
-  ): Promise<TransactionsScreenData>;
+  ): Promise<InboxScreenData>;
   ignoreImportedTransaction(
     input: IgnoreImportedTransactionInput,
     now?: Date
-  ): Promise<TransactionsScreenData>;
+  ): Promise<InboxScreenData>;
+  recoverUnparseableSms(input: RecoverUnparseableSmsInput, now?: Date): Promise<InboxScreenData>;
+  ignoreUnparseableSms(input: IgnoreUnparseableSmsInput, now?: Date): Promise<InboxScreenData>;
 };
 
 export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
   async function hydrateTransactionsScreenData(
     budgetView: BudgetView | null
   ): Promise<TransactionsScreenData> {
-    const [transactions, inboxTransactions, importOutcomes] = await Promise.all([
-      store.getTransactions(),
-      store.getInboxTransactions(),
-      store.getImportOutcomes(),
-    ]);
+    const transactions = await store.getTransactions();
 
     return {
       budgetView,
       transactions,
+    };
+  }
+
+  async function hydrateInboxScreenData(budgetView: BudgetView | null): Promise<InboxScreenData> {
+    const [inboxTransactions, importOutcomes, rawSmsMessages, smsParseResults] = await Promise.all([
+      store.getInboxTransactions(),
+      store.getImportOutcomes(),
+      store.getRawSmsMessages(),
+      store.getSmsParseResults(),
+    ]);
+
+    return assembleInboxScreenData({
+      budgetView,
       inboxTransactions,
       importOutcomes,
-    };
+      rawSmsMessages,
+      smsParseResults,
+    });
   }
 
   return {
@@ -86,20 +118,20 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
     },
 
     async loadTransactionsScreenData(now = new Date()) {
-      const [budgetView, transactions, inboxTransactions, importOutcomes] =
-        await Promise.all([
-          store.getCurrentBudgetView(now),
-          store.getTransactions(),
-          store.getInboxTransactions(),
-          store.getImportOutcomes(),
-        ]);
+      const [budgetView, transactions] = await Promise.all([
+        store.getCurrentBudgetView(now),
+        store.getTransactions(),
+      ]);
 
       return {
         budgetView,
         transactions,
-        inboxTransactions,
-        importOutcomes,
       };
+    },
+
+    async loadInboxScreenData(now = new Date()) {
+      const budgetView = await store.getCurrentBudgetView(now);
+      return hydrateInboxScreenData(budgetView);
     },
 
     async saveManualTransaction(input, now = new Date()) {
@@ -116,18 +148,74 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
 
       return {
         importResult,
-        screenData: await hydrateTransactionsScreenData(importResult.budgetView),
+        screenData: await hydrateInboxScreenData(importResult.budgetView),
       };
     },
 
     async approveImportedTransaction(input, now = new Date()) {
       const budgetView = await store.approveImportedTransaction(input, now);
-      return hydrateTransactionsScreenData(budgetView);
+      return hydrateInboxScreenData(budgetView);
     },
 
     async ignoreImportedTransaction(input, now = new Date()) {
       const budgetView = await store.ignoreImportedTransaction(input, now);
-      return hydrateTransactionsScreenData(budgetView);
+      return hydrateInboxScreenData(budgetView);
     },
+
+    async recoverUnparseableSms(input, now = new Date()) {
+      const budgetView = await store.recoverUnparseableSms(input, now);
+      return hydrateInboxScreenData(budgetView);
+    },
+
+    async ignoreUnparseableSms(input, now = new Date()) {
+      const budgetView = await store.ignoreUnparseableSms(input, now);
+      return hydrateInboxScreenData(budgetView);
+    },
+  };
+}
+
+function assembleInboxScreenData(input: {
+  budgetView: BudgetView | null;
+  inboxTransactions: CanonicalTransaction[];
+  importOutcomes: ImportOutcome[];
+  rawSmsMessages: RawSmsMessage[];
+  smsParseResults: SmsParseResult[];
+}): InboxScreenData {
+  const outcomeByTransactionId = new Map(
+    input.importOutcomes
+      .filter((outcome) => outcome.candidateTransactionId !== null)
+      .map((outcome) => [outcome.candidateTransactionId as string, outcome])
+  );
+  const rawSmsById = new Map(input.rawSmsMessages.map((message) => [message.id, message]));
+  const parseResultById = new Map(input.smsParseResults.map((result) => [result.id, result]));
+
+  return {
+    budgetView: input.budgetView,
+    needsReview: input.inboxTransactions.filter(
+      (transaction) => outcomeByTransactionId.get(transaction.id)?.kind !== 'possible_duplicate'
+    ),
+    possibleDuplicates: input.inboxTransactions.filter(
+      (transaction) => outcomeByTransactionId.get(transaction.id)?.kind === 'possible_duplicate'
+    ),
+    manualImportTasks: input.importOutcomes
+      .filter(
+        (outcome) => outcome.kind === 'manual_import' && outcome.candidateTransactionId === null
+      )
+      .flatMap((outcome) => {
+        const rawSmsMessage = rawSmsById.get(outcome.rawSmsMessageId);
+        if (!rawSmsMessage) {
+          return [];
+        }
+
+        return [
+          {
+            importOutcome: outcome,
+            rawSmsMessage,
+            parseResult: outcome.parseResultId
+              ? (parseResultById.get(outcome.parseResultId) ?? null)
+              : null,
+          },
+        ];
+      }),
   };
 }

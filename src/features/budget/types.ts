@@ -139,6 +139,19 @@ export type IgnoreImportedTransactionInput = {
   transactionId: string;
 };
 
+export type RecoverUnparseableSmsTransactionInput = ManualTransactionInput & {
+  balanceAfterCents: number | null;
+};
+
+export type RecoverUnparseableSmsInput = {
+  importOutcomeId: string;
+  transaction: RecoverUnparseableSmsTransactionInput;
+};
+
+export type IgnoreUnparseableSmsInput = {
+  importOutcomeId: string;
+};
+
 export type TransactionWorkflowCommand =
   | {
       kind: 'approve_imported_transaction';
@@ -148,6 +161,15 @@ export type TransactionWorkflowCommand =
   | {
       kind: 'ignore_imported_transaction';
       transactionId: string;
+    }
+  | {
+      kind: 'recover_unparseable_sms';
+      importOutcomeId: string;
+      transaction: RecoverUnparseableSmsTransactionInput;
+    }
+  | {
+      kind: 'ignore_unparseable_sms';
+      importOutcomeId: string;
     };
 
 export type BudgetCategoryView = {

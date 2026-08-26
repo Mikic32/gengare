@@ -11,9 +11,11 @@ import type {
   CanonicalTransaction,
   CompleteOnboardingInput,
   IgnoreImportedTransactionInput,
+  IgnoreUnparseableSmsInput,
   ImportOutcome,
   ManualTransactionInput,
   RawSmsMessage,
+  RecoverUnparseableSmsInput,
   SmsParseResult,
   UpdateManualTransactionInput,
 } from './types';
@@ -25,6 +27,11 @@ export type ImportedSmsFacts = {
   importOutcome: ImportOutcome;
 };
 
+export type RecoveredUnparseableSmsFacts = {
+  transaction: CanonicalTransaction;
+  importOutcome: ImportOutcome;
+};
+
 export type BudgetStorage = {
   readSnapshot(): Promise<BudgetSnapshot>;
   replaceSnapshot(snapshot: BudgetSnapshot): Promise<void>;
@@ -32,6 +39,8 @@ export type BudgetStorage = {
   appendTransaction(transaction: CanonicalTransaction): Promise<void>;
   updateTransaction(transaction: CanonicalTransaction): Promise<void>;
   appendImportedSmsFacts(facts: ImportedSmsFacts): Promise<void>;
+  appendRecoveredUnparseableSmsFacts(facts: RecoveredUnparseableSmsFacts): Promise<void>;
+  updateImportOutcome(outcome: ImportOutcome): Promise<void>;
 };
 
 export type AssignMoneyToCategoryInput = {
@@ -67,11 +76,19 @@ export type BudgetStore = {
   getImportOutcomes(): Promise<BudgetSnapshot['importOutcomes']>;
   completeOnboarding(input: CompleteOnboardingInput, now?: Date): Promise<BudgetView>;
   assignMoneyToCategory(input: AssignMoneyToCategoryInput, now?: Date): Promise<BudgetView>;
-  moveMoneyBetweenCategories(input: MoveMoneyBetweenCategoriesInput, now?: Date): Promise<BudgetView>;
+  moveMoneyBetweenCategories(
+    input: MoveMoneyBetweenCategoriesInput,
+    now?: Date
+  ): Promise<BudgetView>;
   createManualTransaction(input: ManualTransactionInput, now?: Date): Promise<BudgetView>;
   updateManualTransaction(input: UpdateManualTransactionInput, now?: Date): Promise<BudgetView>;
-  approveImportedTransaction(input: ApproveImportedTransactionInput, now?: Date): Promise<BudgetView>;
+  approveImportedTransaction(
+    input: ApproveImportedTransactionInput,
+    now?: Date
+  ): Promise<BudgetView>;
   ignoreImportedTransaction(input: IgnoreImportedTransactionInput, now?: Date): Promise<BudgetView>;
+  recoverUnparseableSms(input: RecoverUnparseableSmsInput, now?: Date): Promise<BudgetView>;
+  ignoreUnparseableSms(input: IgnoreUnparseableSmsInput, now?: Date): Promise<BudgetView>;
   importDebugSms(input: DebugSmsImportInput, now?: Date): Promise<DebugSmsImportResult>;
 };
 
@@ -261,6 +278,39 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
       });
     },
 
+    async recoverUnparseableSms(input, now = new Date()) {
+      return runSerializedMutation(async () => {
+        const snapshot = await storage.readSnapshot();
+        const nextSnapshot = applyTransactionWorkflow(
+          snapshot,
+          {
+            kind: 'recover_unparseable_sms',
+            importOutcomeId: input.importOutcomeId,
+            transaction: input.transaction,
+          },
+          now
+        );
+        await storage.appendRecoveredUnparseableSmsFacts(
+          getRecoveredUnparseableSmsFacts(snapshot, nextSnapshot, input.importOutcomeId)
+        );
+        return deriveBudgetView(nextSnapshot, now);
+      });
+    },
+
+    async ignoreUnparseableSms(input, now = new Date()) {
+      return runSerializedMutation(async () => {
+        const snapshot = await storage.readSnapshot();
+        const nextSnapshot = applyTransactionWorkflow(snapshot, {
+          kind: 'ignore_unparseable_sms',
+          importOutcomeId: input.importOutcomeId,
+        });
+        await storage.updateImportOutcome(
+          getImportOutcomeById(nextSnapshot, input.importOutcomeId)
+        );
+        return deriveBudgetView(nextSnapshot, now);
+      });
+    },
+
     async importDebugSms(input, now = new Date()) {
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
@@ -292,7 +342,9 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
   };
 }
 
-export function createMemoryBudgetStorage(initialSnapshot: BudgetSnapshot = EMPTY_SNAPSHOT): BudgetStorage {
+export function createMemoryBudgetStorage(
+  initialSnapshot: BudgetSnapshot = EMPTY_SNAPSHOT
+): BudgetStorage {
   let snapshot = cloneSnapshot(initialSnapshot);
 
   return {
@@ -318,6 +370,14 @@ export function createMemoryBudgetStorage(initialSnapshot: BudgetSnapshot = EMPT
 
     async appendImportedSmsFacts(facts) {
       snapshot = appendImportedSmsFactsToSnapshot(snapshot, facts);
+    },
+
+    async appendRecoveredUnparseableSmsFacts(facts) {
+      snapshot = appendRecoveredUnparseableSmsFactsToSnapshot(snapshot, facts);
+    },
+
+    async updateImportOutcome(outcome) {
+      snapshot = updateImportOutcomeInSnapshot(snapshot, outcome);
     },
   };
 }
@@ -357,7 +417,9 @@ function assertCategoryHasAvailableBalance(
   now: Date
 ) {
   const budgetView = deriveBudgetView(snapshot, now);
-  const category = budgetView.categoryGroups.flatMap((group) => group.categories).find((entry) => entry.id === categoryId);
+  const category = budgetView.categoryGroups
+    .flatMap((group) => group.categories)
+    .find((entry) => entry.id === categoryId);
 
   if (!category) {
     throw new Error('Category does not exist.');
@@ -426,7 +488,10 @@ function compareImportOutcomesNewestFirst(
   return right.createdAt.localeCompare(left.createdAt);
 }
 
-function appendAssignmentEventsToSnapshot(snapshot: BudgetSnapshot, events: AssignmentEvent[]): BudgetSnapshot {
+function appendAssignmentEventsToSnapshot(
+  snapshot: BudgetSnapshot,
+  events: AssignmentEvent[]
+): BudgetSnapshot {
   return {
     ...snapshot,
     assignmentEvents: [...snapshot.assignmentEvents, ...events],
@@ -455,24 +520,91 @@ function updateTransactionInSnapshot(
 
   return {
     ...snapshot,
-    transactions: snapshot.transactions.map((entry, index) => (index === transactionIndex ? transaction : entry)),
+    transactions: snapshot.transactions.map((entry, index) =>
+      index === transactionIndex ? transaction : entry
+    ),
   };
 }
 
-function appendImportedSmsFactsToSnapshot(snapshot: BudgetSnapshot, facts: ImportedSmsFacts): BudgetSnapshot {
+function appendImportedSmsFactsToSnapshot(
+  snapshot: BudgetSnapshot,
+  facts: ImportedSmsFacts
+): BudgetSnapshot {
   return {
     ...snapshot,
     transactions: facts.candidateTransaction
       ? [...snapshot.transactions, facts.candidateTransaction]
       : snapshot.transactions,
     rawSmsMessages: [...snapshot.rawSmsMessages, facts.rawSmsMessage],
-    smsParseResults: facts.parseResult ? [...snapshot.smsParseResults, facts.parseResult] : snapshot.smsParseResults,
+    smsParseResults: facts.parseResult
+      ? [...snapshot.smsParseResults, facts.parseResult]
+      : snapshot.smsParseResults,
     importOutcomes: [...snapshot.importOutcomes, facts.importOutcome],
   };
 }
 
-function getAppendedTransaction(snapshot: BudgetSnapshot, nextSnapshot: BudgetSnapshot): CanonicalTransaction {
-  const existingTransactionIds = new Set(snapshot.transactions.map((transaction) => transaction.id));
+function appendRecoveredUnparseableSmsFactsToSnapshot(
+  snapshot: BudgetSnapshot,
+  facts: RecoveredUnparseableSmsFacts
+): BudgetSnapshot {
+  return {
+    ...snapshot,
+    transactions: [...snapshot.transactions, facts.transaction],
+    importOutcomes: snapshot.importOutcomes.map((entry) =>
+      entry.id === facts.importOutcome.id ? facts.importOutcome : entry
+    ),
+  };
+}
+
+function updateImportOutcomeInSnapshot(
+  snapshot: BudgetSnapshot,
+  outcome: ImportOutcome
+): BudgetSnapshot {
+  const outcomeIndex = snapshot.importOutcomes.findIndex((entry) => entry.id === outcome.id);
+
+  if (outcomeIndex < 0) {
+    throw new Error('Import outcome does not exist.');
+  }
+
+  return {
+    ...snapshot,
+    importOutcomes: snapshot.importOutcomes.map((entry, index) =>
+      index === outcomeIndex ? outcome : entry
+    ),
+  };
+}
+
+function getRecoveredUnparseableSmsFacts(
+  snapshot: BudgetSnapshot,
+  nextSnapshot: BudgetSnapshot,
+  importOutcomeId: string
+): RecoveredUnparseableSmsFacts {
+  const transaction = getAppendedTransaction(snapshot, nextSnapshot);
+  const importOutcome = getImportOutcomeById(nextSnapshot, importOutcomeId);
+
+  return {
+    transaction,
+    importOutcome,
+  };
+}
+
+function getImportOutcomeById(snapshot: BudgetSnapshot, importOutcomeId: string): ImportOutcome {
+  const outcome = snapshot.importOutcomes.find((entry) => entry.id === importOutcomeId);
+
+  if (!outcome) {
+    throw new Error('Import outcome does not exist.');
+  }
+
+  return outcome;
+}
+
+function getAppendedTransaction(
+  snapshot: BudgetSnapshot,
+  nextSnapshot: BudgetSnapshot
+): CanonicalTransaction {
+  const existingTransactionIds = new Set(
+    snapshot.transactions.map((transaction) => transaction.id)
+  );
   const appendedTransactions = nextSnapshot.transactions.filter(
     (transaction) => !existingTransactionIds.has(transaction.id)
   );

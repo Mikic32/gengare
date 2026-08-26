@@ -202,7 +202,7 @@ function createBudgetSnapshot(overrides: Partial<BudgetSnapshot> = {}): BudgetSn
   return {
     ...snapshot,
     ...overrides,
-    account: overrides.account ?? snapshot.account,
+    account: overrides.account ?? snapshot.account!,
   };
 }
 

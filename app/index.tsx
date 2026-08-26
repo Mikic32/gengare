@@ -3,7 +3,10 @@ import { Text } from '@/components/ui/text';
 import { DEFAULT_CATEGORY_GROUPS } from '@/src/features/budget/defaults';
 import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
 import { BudgetStatCard, FormField } from '@/src/features/budget/app-components';
-import { getErrorMessage, parseRequiredPositiveAmountToCents } from '@/src/features/budget/app-helpers';
+import {
+  getErrorMessage,
+  parseRequiredPositiveAmountToCents,
+} from '@/src/features/budget/app-helpers';
 import { budgetAppStore } from '@/src/features/budget/app-store';
 import type { BudgetView, CompleteOnboardingInput } from '@/src/features/budget/types';
 import { router, Stack } from 'expo-router';
@@ -42,7 +45,9 @@ export default function Screen() {
   const [accountName, setAccountName] = React.useState('Main account');
   const [currencyCode, setCurrencyCode] = React.useState('RSD');
   const [startingBalance, setStartingBalance] = React.useState('0.00');
-  const [groups, setGroups] = React.useState<EditableGroup[]>(() => createEditableGroups(DEFAULT_CATEGORY_GROUPS));
+  const [groups, setGroups] = React.useState<EditableGroup[]>(() =>
+    createEditableGroups(DEFAULT_CATEGORY_GROUPS)
+  );
 
   React.useEffect(() => {
     void loadBudgetView();
@@ -147,7 +152,10 @@ export default function Screen() {
             <View className="gap-3">
               <View className="flex-row items-center justify-between">
                 <Text variant="large">Category groups</Text>
-                <Button size="sm" variant="outline" onPress={() => setGroups((current) => [...current, createEmptyGroup()])}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onPress={() => setGroups((current) => [...current, createEmptyGroup()])}>
                   <Text>Add group</Text>
                 </Button>
               </View>
@@ -161,7 +169,9 @@ export default function Screen() {
                         value={group.name}
                         onChangeText={(value) => {
                           setGroups((current) =>
-                            current.map((entry) => (entry.id === group.id ? { ...entry, name: value } : entry))
+                            current.map((entry) =>
+                              entry.id === group.id ? { ...entry, name: value } : entry
+                            )
                           );
                         }}
                         placeholder="Essentials"
@@ -211,7 +221,9 @@ export default function Screen() {
                                   ? entry
                                   : {
                                       ...entry,
-                                      categories: entry.categories.filter((item) => item.id !== category.id),
+                                      categories: entry.categories.filter(
+                                        (item) => item.id !== category.id
+                                      ),
                                     }
                               )
                             );
@@ -367,7 +379,8 @@ function BudgetScreen({
     }
   }
 
-  const selectedMoveFrom = categoryOptions.find((option) => option.id === moveFromCategoryId) ?? null;
+  const selectedMoveFrom =
+    categoryOptions.find((option) => option.id === moveFromCategoryId) ?? null;
   const selectedMoveTo = categoryOptions.find((option) => option.id === moveToCategoryId) ?? null;
 
   return (
@@ -379,22 +392,35 @@ function BudgetScreen({
             Current month: <Text variant="code">{budgetView.monthKey}</Text>
           </Text>
         </View>
-        <Button size="sm" variant="outline" onPress={() => router.push('./transactions')}>
-          <Text>Transactions</Text>
-        </Button>
+        <View className="flex-row gap-2">
+          <Button size="sm" variant="outline" onPress={() => router.push('./inbox')}>
+            <Text>Inbox</Text>
+          </Button>
+          <Button size="sm" variant="outline" onPress={() => router.push('./transactions')}>
+            <Text>Transactions</Text>
+          </Button>
+        </View>
       </View>
 
       <View className="gap-3">
         <BudgetStatCard
           label="Account balance"
-          value={formatCurrency(budgetView.moneyState.accountBalance.amountCents, budgetView.currencyCode)}
+          value={formatCurrency(
+            budgetView.moneyState.accountBalance.amountCents,
+            budgetView.currencyCode
+          )}
           helper="Latest non-ignored bank balance evidence."
         />
         <BudgetStatCard
           label="Ready to assign"
-          value={formatCurrency(budgetView.moneyState.assignableCash.amountCents, budgetView.currencyCode)}
+          value={formatCurrency(
+            budgetView.moneyState.assignableCash.amountCents,
+            budgetView.currencyCode
+          )}
           helper="Approved uncategorized cash available this month."
-          valueClassName={budgetView.moneyState.assignableCash.amountCents < 0 ? 'text-destructive' : undefined}
+          valueClassName={
+            budgetView.moneyState.assignableCash.amountCents < 0 ? 'text-destructive' : undefined
+          }
         />
       </View>
 
@@ -407,7 +433,8 @@ function BudgetScreen({
         ) : (
           <>
             <Text className="text-sm text-muted-foreground">
-              From {formatMoveCategoryLabel(selectedMoveFrom)} to {formatMoveCategoryLabel(selectedMoveTo)}
+              From {formatMoveCategoryLabel(selectedMoveFrom)} to{' '}
+              {formatMoveCategoryLabel(selectedMoveTo)}
             </Text>
             <View className="gap-2">
               <Text className="text-sm font-medium">Amount</Text>
@@ -449,8 +476,8 @@ function BudgetScreen({
                   </Text>
                 </View>
                 <Text className="text-sm text-muted-foreground">
-                  Assigned {formatCurrency(category.assignedCents, budgetView.currencyCode)} · Activity{' '}
-                  {formatCurrency(category.activityCents, budgetView.currencyCode)}
+                  Assigned {formatCurrency(category.assignedCents, budgetView.currencyCode)} ·
+                  Activity {formatCurrency(category.activityCents, budgetView.currencyCode)}
                 </Text>
                 <View className="mt-2 flex-row items-end gap-2">
                   <View className="flex-1 gap-2">
