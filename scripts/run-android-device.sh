@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mapfile -t connected_devices < <(
-  adb devices -l | awk '
+  "$SCRIPT_DIR/with-android-jdk.sh" adb devices -l | awk '
     NR > 1 && $2 == "device" {
       device_name = ""
       for (i = 3; i <= NF; i++) {
