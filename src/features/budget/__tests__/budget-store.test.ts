@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { deriveBudgetView } from '../budget-engine';
+import { createSampleDebugSmsBody } from '../sms-import';
 import { createMemoryBudgetStorage, createBudgetStore, type BudgetStorage } from '../store';
 
 describe('budget store bootstrap', () => {
@@ -406,6 +407,62 @@ describe('budget store bootstrap', () => {
       kind: 'needs_review',
       candidateTransactionId: inboxTransactions[0].id,
       reason: 'parsed_ok',
+    });
+  });
+
+  it('imports the in-app sample SMS as a review candidate after current onboarding', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+    const onboardedAt = new Date('2026-08-26T14:00:00.000Z');
+    const importedAt = new Date('2026-08-26T16:00:00.000Z');
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      onboardedAt
+    );
+
+    expectAccountBalance(initialView, 125_500);
+
+    const importResult = await store.importDebugSms(
+      {
+        sender: 'BANK',
+        body: createSampleDebugSmsBody(importedAt),
+        receivedAt: importedAt.toISOString(),
+      },
+      importedAt
+    );
+
+    expect(importResult.importOutcome).toMatchObject({
+      kind: 'needs_review',
+      reason: 'parsed_ok',
+    });
+    expect(importResult.transaction).toMatchObject({
+      source: 'sms',
+      status: 'needs_review',
+      amountCents: -156_880,
+      occurredAt: importedAt.toISOString(),
+      balanceAfterCents: 452_755,
+    });
+    expectAccountBalance(importResult.budgetView, 452_755);
+    expectAssignableCash(importResult.budgetView, 125_500);
+
+    const rawSmsMessages = await store.getRawSmsMessages();
+    const parseResults = await store.getSmsParseResults();
+    expect(rawSmsMessages).toHaveLength(1);
+    expect(parseResults).toHaveLength(1);
+    expect(parseResults[0]).toMatchObject({
+      rawSmsMessageId: rawSmsMessages[0].id,
+      status: 'parsed',
+      transactionId: importResult.transaction?.id,
     });
   });
 

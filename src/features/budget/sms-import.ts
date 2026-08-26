@@ -13,6 +13,16 @@ export type ParsedDebugSms = {
   memo: string | null;
 };
 
+export function createSampleDebugSmsBody(occurredAt: Date = new Date()) {
+  return [
+    `Datum: ${formatOtpDate(occurredAt)}, Vreme: ${formatOtpTime(occurredAt)}`,
+    'Tekuci racun: 93005***84',
+    'Odliv: 1.568,80 RSD',
+    'Raspoloziva sredstva: 4.527,55 RSD',
+    'Vasa OTP banka',
+  ].join('\n');
+}
+
 export function parseDebugBankSms(body: string): ParsedDebugSms | null {
   const fields = extractOtpSmsFields(body);
   if (!fields) {
@@ -85,5 +95,17 @@ function normalizeSmsOccurredAt(dateText: string, timeText: string) {
   }
 
   return occurredAt.toISOString();
+}
+
+function formatOtpDate(date: Date) {
+  return `${padTwoDigits(date.getDate())}.${padTwoDigits(date.getMonth() + 1)}.${date.getFullYear()}`;
+}
+
+function formatOtpTime(date: Date) {
+  return `${padTwoDigits(date.getHours())}:${padTwoDigits(date.getMinutes())}:${padTwoDigits(date.getSeconds())}`;
+}
+
+function padTwoDigits(value: number) {
+  return String(value).padStart(2, '0');
 }
 

@@ -1,6 +1,8 @@
 import { parseDecimalMoneyToCents } from './money';
 import type { ImportOutcome } from './types';
 
+export { createSampleDebugSmsBody } from './sms-import';
+
 export function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
     return error.message;
@@ -49,16 +51,6 @@ export function parseDateInputToIso(value: string) {
 
 export function centsToDecimalString(amountCents: number) {
   return (amountCents / 100).toFixed(2);
-}
-
-export function createSampleDebugSmsBody() {
-  return [
-    'Datum: 30.06.2026, Vreme: 03:24:04',
-    'Tekuci racun: 93005***84',
-    'Odliv: 1.568,80 RSD',
-    'Raspoloziva sredstva: 4.527,55 RSD',
-    'Vasa OTP banka',
-  ].join('\n');
 }
 
 export function formatImportOutcomeReason(reason: ImportOutcome['reason']) {
