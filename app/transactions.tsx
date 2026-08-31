@@ -1,25 +1,36 @@
 import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
-import { BudgetStatCard, FormField } from '@/src/features/budget/app-components';
+import {
+  CategoryChips,
+  DateQuickField,
+  EmptyState,
+  ErrorBanner,
+  ErrorState,
+  FormField,
+  KindToggle,
+  LoadingState,
+  ScreenScroll,
+} from '@/src/features/budget/app-components';
 import {
   centsToDecimalString,
+  formatShortDate,
   getErrorMessage,
+  getLocalDateKey,
   parseDateInputToIso,
   parseRequiredPositiveAmountToCents,
+  transactionSourceLabel,
+  transactionTitle,
 } from '@/src/features/budget/app-helpers';
+import { useAppShell } from '@/src/features/budget/app-shell';
 import { budgetAppStore } from '@/src/features/budget/app-store';
-import { toLocalDateKey, toMonthKey } from '@/src/features/budget/budget-engine';
+import { toLocalDateKey } from '@/src/features/budget/budget-engine';
 import { formatCurrency } from '@/src/features/budget/money';
 import type { BudgetView, CanonicalTransaction } from '@/src/features/budget/types';
-import { router, Stack } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
+import { router } from 'expo-router';
 import * as React from 'react';
-import { ActivityIndicator, Alert, ScrollView, View } from 'react-native';
+import { Alert, Pressable, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-const SCREEN_OPTIONS = {
-  title: 'Transactions',
-  headerShown: false,
-};
 
 type TransactionKindDraft = 'inflow' | 'outflow';
 
@@ -38,10 +49,17 @@ type CategoryOption = {
   label: string;
 };
 
+type TransactionGroup = {
+  dateKey: string;
+  transactions: CanonicalTransaction[];
+};
+
 export default function TransactionsScreen() {
+  const { refreshInboxCount } = useAppShell();
   const [budgetView, setBudgetView] = React.useState<BudgetView | null>(null);
   const [transactions, setTransactions] = React.useState<CanonicalTransaction[]>([]);
   const [draft, setDraft] = React.useState<TransactionDraft>(() => createEmptyDraft());
+  const [isComposerOpen, setIsComposerOpen] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -55,59 +73,67 @@ export default function TransactionsScreen() {
     return budgetView.categoryGroups.flatMap((group) =>
       group.categories.map((category) => ({
         id: category.id,
-        label: `${group.name} / ${category.name}`,
+        label: category.name,
       }))
     );
   }, [budgetView]);
 
-  const manualTransactions = React.useMemo(
-    () => transactions.filter((transaction) => transaction.source === 'manual'),
-    [transactions]
+  const ledgerGroups = React.useMemo<TransactionGroup[]>(() => {
+    const approved = transactions
+      .filter((transaction) => transaction.status === 'approved')
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    const groups = new Map<string, CanonicalTransaction[]>();
+
+    for (const transaction of approved) {
+      const dateKey = toLocalDateKey(transaction.occurredAt);
+      const existing = groups.get(dateKey);
+
+      if (existing) {
+        existing.push(transaction);
+      } else {
+        groups.set(dateKey, [transaction]);
+      }
+    }
+
+    return [...groups.entries()].map(([dateKey, groupedTransactions]) => ({
+      dateKey,
+      transactions: groupedTransactions,
+    }));
+  }, [transactions]);
+
+  const loadScreenData = React.useCallback(
+    async (options?: { showSpinner?: boolean }) => {
+      if (options?.showSpinner !== false) {
+        setIsLoading(true);
+      }
+      setLoadError(null);
+
+      try {
+        const nextScreenData = await budgetAppStore.loadTransactionsScreenData(new Date());
+        setBudgetView(nextScreenData.budgetView);
+        setTransactions(nextScreenData.transactions);
+        await refreshInboxCount();
+      } catch (error) {
+        setLoadError(getErrorMessage(error));
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [refreshInboxCount]
   );
 
-  React.useEffect(() => {
-    void loadScreenData();
-  }, []);
-
-  React.useEffect(() => {
-    if (draft.kind === 'inflow' && draft.categoryId !== null) {
-      setDraft((current) => ({
-        ...current,
-        categoryId: null,
-      }));
-    }
-  }, [draft.kind, draft.categoryId]);
-
-  React.useEffect(() => {
-    if (draft.kind === 'outflow' && !draft.categoryId && categoryOptions[0]) {
-      setDraft((current) => ({
-        ...current,
-        categoryId: current.categoryId ?? categoryOptions[0].id,
-      }));
-    }
-  }, [categoryOptions, draft.kind, draft.categoryId]);
-
-  async function loadScreenData() {
-    setIsLoading(true);
-    setLoadError(null);
-
-    try {
-      const nextScreenData = await budgetAppStore.loadTransactionsScreenData(new Date());
-      setBudgetView(nextScreenData.budgetView);
-      setTransactions(nextScreenData.transactions);
-    } catch (error) {
-      setLoadError(getErrorMessage(error));
-    } finally {
-      setIsLoading(false);
-    }
-  }
+  useFocusEffect(
+    React.useCallback(() => {
+      void loadScreenData({ showSpinner: false });
+    }, [loadScreenData])
+  );
 
   async function handleSubmit() {
     setIsSaving(true);
     setSaveError(null);
 
     try {
-      const amountCents = parseRequiredPositiveAmountToCents(draft.amount, 'Transaction amount');
+      const amountCents = parseRequiredPositiveAmountToCents(draft.amount, 'Amount');
       const occurredAt = parseDateInputToIso(draft.occurredOn);
       const input = {
         kind: draft.kind,
@@ -131,20 +157,23 @@ export default function TransactionsScreen() {
       setBudgetView(nextScreenData.budgetView);
       setTransactions(nextScreenData.transactions);
       setDraft(createEmptyDraft());
+      setIsComposerOpen(false);
     } catch (error) {
       const message = getErrorMessage(error);
       setSaveError(message);
-      Alert.alert(
-        draft.transactionId ? 'Could not update transaction' : 'Could not save transaction',
-        message
-      );
+      Alert.alert(draft.transactionId ? 'Could not update' : 'Could not save', message);
     } finally {
       setIsSaving(false);
     }
   }
 
   function startEditing(transaction: CanonicalTransaction) {
+    if (transaction.source !== 'manual') {
+      return;
+    }
+
     setSaveError(null);
+    setIsComposerOpen(true);
     setDraft({
       transactionId: transaction.id,
       kind: transaction.kind,
@@ -156,147 +185,84 @@ export default function TransactionsScreen() {
     });
   }
 
+  function closeComposer() {
+    setDraft(createEmptyDraft());
+    setSaveError(null);
+    setIsComposerOpen(false);
+  }
+
   if (isLoading) {
     return (
-      <>
-        <Stack.Screen options={SCREEN_OPTIONS} />
-        <SafeAreaView className="flex-1 bg-background">
-          <View className="flex-1 items-center justify-center gap-3">
-            <ActivityIndicator />
-            <Text className="text-muted-foreground">Loading transactions…</Text>
-          </View>
-        </SafeAreaView>
-      </>
+      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <LoadingState message="Loading activity…" />
+      </SafeAreaView>
     );
   }
 
   if (loadError) {
     return (
-      <>
-        <Stack.Screen options={SCREEN_OPTIONS} />
-        <SafeAreaView className="flex-1 bg-background">
-          <View className="flex-1 justify-center gap-4 px-5">
-            <View className="gap-2 rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
-              <Text className="font-semibold text-destructive">Could not load transactions</Text>
-              <Text className="text-destructive">{loadError}</Text>
-            </View>
-            <Button onPress={() => void loadScreenData()}>
-              <Text>Retry loading</Text>
-            </Button>
-            <Button variant="outline" onPress={() => router.replace('/')}>
-              <Text>Back to budget</Text>
-            </Button>
-          </View>
-        </SafeAreaView>
-      </>
+      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <ErrorState
+          title="Could not load activity"
+          message={loadError}
+          onRetry={() => void loadScreenData()}
+          secondaryAction={{ label: 'Back to budget', onPress: () => router.replace('/') }}
+        />
+      </SafeAreaView>
     );
   }
 
   if (!budgetView) {
     return (
-      <>
-        <Stack.Screen options={SCREEN_OPTIONS} />
-        <SafeAreaView className="flex-1 bg-background">
-          <View className="flex-1 justify-center gap-4 px-5">
-            <View className="gap-2 rounded-2xl border border-border bg-card p-4">
-              <Text variant="large">No budget yet</Text>
-              <Text className="text-muted-foreground">
-                Finish onboarding on the budget screen before adding manual transactions.
-              </Text>
-            </View>
-            <Button onPress={() => router.replace('/')}>
-              <Text>Go to budget</Text>
-            </Button>
-          </View>
-        </SafeAreaView>
-      </>
+      <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+        <View className="flex-1 justify-center px-5">
+          <EmptyState
+            title="Set up your budget first"
+            message="Finish setup on the budget tab before adding transactions."
+            action={{ label: 'Go to budget', onPress: () => router.replace('/') }}
+          />
+        </View>
+      </SafeAreaView>
     );
   }
 
-  return (
-    <>
-      <Stack.Screen options={SCREEN_OPTIONS} />
-      <SafeAreaView className="flex-1 bg-background">
-        <ScrollView className="flex-1" contentContainerClassName="gap-6 px-5 py-6">
-          <View className="flex-row items-start justify-between gap-3">
-            <View className="gap-1">
-              <Text variant="h3">Transactions</Text>
-              <Text className="text-muted-foreground">
-                Manual ledger for <Text variant="code">{budgetView.monthKey}</Text>
-              </Text>
-            </View>
-            <View className="flex-row gap-2">
-              <Button size="sm" variant="outline" onPress={() => router.replace('/')}>
-                <Text>Budget</Text>
-              </Button>
-              <Button size="sm" variant="outline" onPress={() => router.push('./inbox')}>
-                <Text>Inbox</Text>
-              </Button>
-            </View>
-          </View>
+  const canSave = draft.kind === 'inflow' || draft.categoryId !== null;
 
-          <View className="gap-3">
-            <BudgetStatCard
-              label="Ready to assign"
-              value={formatCurrency(
-                budgetView.moneyState.assignableCash.amountCents,
-                budgetView.currencyCode
-              )}
-              helper="Approved uncategorized inflows land here until you assign them."
-              valueClassName={
-                budgetView.moneyState.assignableCash.amountCents < 0
-                  ? 'text-destructive'
-                  : undefined
+  return (
+    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+      <ScreenScroll>
+        <View className="flex-row items-start justify-between gap-3 pr-14">
+          <View className="flex-1 gap-1">
+            <Text variant="h3">Activity</Text>
+            <Text className="text-muted-foreground">Approved money in and out.</Text>
+          </View>
+          {isComposerOpen ? (
+            <Button size="sm" variant="ghost" onPress={closeComposer}>
+              <Text>Cancel</Text>
+            </Button>
+          ) : (
+            <Button size="sm" onPress={() => setIsComposerOpen(true)}>
+              <Text>Add</Text>
+            </Button>
+          )}
+        </View>
+
+        {isComposerOpen ? (
+          <View className="gap-4 rounded-2xl border border-border bg-card p-5">
+            <Text variant="large">
+              {draft.transactionId ? 'Edit transaction' : 'Add transaction'}
+            </Text>
+
+            <KindToggle
+              value={draft.kind}
+              onChange={(kind) =>
+                setDraft((current) => ({
+                  ...current,
+                  kind,
+                  categoryId: kind === 'outflow' ? current.categoryId : null,
+                }))
               }
             />
-            <BudgetStatCard
-              label="Account balance"
-              value={formatCurrency(
-                budgetView.moneyState.accountBalance.amountCents,
-                budgetView.currencyCode
-              )}
-              helper="Newest non-ignored bank balance evidence."
-            />
-          </View>
-
-          <View className="gap-4 rounded-2xl border border-border bg-card p-4">
-            <View className="flex-row items-center justify-between gap-3">
-              <Text variant="large">
-                {draft.transactionId ? 'Edit transaction' : 'Add transaction'}
-              </Text>
-              {draft.transactionId ? (
-                <Button size="sm" variant="ghost" onPress={() => setDraft(createEmptyDraft())}>
-                  <Text>Cancel</Text>
-                </Button>
-              ) : null}
-            </View>
-
-            <View className="flex-row gap-2">
-              <Button
-                size="sm"
-                variant={draft.kind === 'outflow' ? 'secondary' : 'outline'}
-                onPress={() =>
-                  setDraft((current) => ({
-                    ...current,
-                    kind: 'outflow',
-                    categoryId: current.categoryId ?? categoryOptions[0]?.id ?? null,
-                  }))
-                }>
-                <Text>Outflow</Text>
-              </Button>
-              <Button
-                size="sm"
-                variant={draft.kind === 'inflow' ? 'secondary' : 'outline'}
-                onPress={() =>
-                  setDraft((current) => ({
-                    ...current,
-                    kind: 'inflow',
-                    categoryId: null,
-                  }))
-                }>
-                <Text>Inflow</Text>
-              </Button>
-            </View>
 
             <FormField
               label="Amount"
@@ -304,13 +270,11 @@ export default function TransactionsScreen() {
               onChangeText={(value) => setDraft((current) => ({ ...current, amount: value }))}
               placeholder="0.00"
               keyboardType="decimal-pad"
+              autoFocus
             />
-            <FormField
-              label="Occurred on"
+            <DateQuickField
               value={draft.occurredOn}
-              onChangeText={(value) => setDraft((current) => ({ ...current, occurredOn: value }))}
-              placeholder="2026-06-30"
-              autoCapitalize="none"
+              onChange={(occurredOn) => setDraft((current) => ({ ...current, occurredOn }))}
             />
             <FormField
               label="Payee"
@@ -319,124 +283,99 @@ export default function TransactionsScreen() {
               placeholder={draft.kind === 'inflow' ? 'Salary, refund…' : 'Store, landlord…'}
             />
             <FormField
-              label="Memo"
+              label="Note"
               value={draft.memo}
               onChangeText={(value) => setDraft((current) => ({ ...current, memo: value }))}
-              placeholder="Optional note"
+              placeholder="Optional"
             />
 
             {draft.kind === 'outflow' ? (
               <View className="gap-2">
-                <Text className="text-sm font-medium">Category</Text>
-                <View className="flex-row flex-wrap gap-2">
-                  {categoryOptions.map((category) => (
-                    <Button
-                      key={category.id}
-                      size="sm"
-                      variant={draft.categoryId === category.id ? 'secondary' : 'outline'}
-                      onPress={() =>
-                        setDraft((current) => ({
-                          ...current,
-                          categoryId: category.id,
-                        }))
-                      }>
-                      <Text>{category.label}</Text>
-                    </Button>
-                  ))}
-                </View>
+                <Text className="text-sm font-medium">Envelope</Text>
+                <CategoryChips
+                  options={categoryOptions}
+                  selectedId={draft.categoryId}
+                  onSelect={(categoryId) =>
+                    setDraft((current) => ({
+                      ...current,
+                      categoryId,
+                    }))
+                  }
+                />
               </View>
             ) : (
-              <View className="rounded-xl bg-muted/40 p-3">
-                <Text className="text-sm text-muted-foreground">
-                  Approved inflows stay uncategorized and increase assignable cash.
-                </Text>
-              </View>
+              <Text className="text-sm text-muted-foreground">Income goes to Ready to Assign.</Text>
             )}
 
-            {saveError ? (
-              <View className="rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
-                <Text className="text-destructive">{saveError}</Text>
-              </View>
-            ) : null}
+            {saveError ? <ErrorBanner message={saveError} /> : null}
 
-            <Button onPress={() => void handleSubmit()} disabled={isSaving}>
-              <Text>
-                {isSaving
-                  ? 'Saving transaction…'
-                  : draft.transactionId
-                    ? 'Update transaction'
-                    : 'Save transaction'}
-              </Text>
+            <Button onPress={() => void handleSubmit()} disabled={isSaving || !canSave}>
+              <Text>{isSaving ? 'Saving…' : draft.transactionId ? 'Update' : 'Save'}</Text>
             </Button>
           </View>
+        ) : null}
 
-          <View className="gap-3">
-            <Text variant="large">Manual ledger</Text>
-            {manualTransactions.length === 0 ? (
-              <View className="rounded-2xl border border-border bg-card p-4">
-                <Text className="text-muted-foreground">
-                  No manual transactions yet. Add an inflow or outflow above.
-                </Text>
-              </View>
-            ) : (
-              manualTransactions.map((transaction) => {
-                const categoryLabel = transaction.categoryId
-                  ? (categoryOptions.find((category) => category.id === transaction.categoryId)
-                      ?.label ?? 'Unknown category')
-                  : 'Assignable cash';
+        {!isComposerOpen && ledgerGroups.length === 0 ? (
+          <EmptyState
+            title="No activity yet"
+            message="Bank SMS you approve and anything you add by hand will show up here."
+            action={{ label: 'Add a transaction', onPress: () => setIsComposerOpen(true) }}
+          />
+        ) : (
+          ledgerGroups.map((group) => (
+            <View key={group.dateKey} className="gap-2">
+              <Text className="text-sm font-medium text-muted-foreground">
+                {formatShortDate(group.dateKey)}
+              </Text>
+              <View className="overflow-hidden rounded-2xl border border-border bg-card">
+                {group.transactions.map((transaction, index) => {
+                  const categoryLabel = transaction.categoryId
+                    ? (categoryOptions.find((category) => category.id === transaction.categoryId)
+                        ?.label ?? 'Unknown category')
+                    : transaction.kind === 'inflow'
+                      ? 'Ready to Assign'
+                      : 'Uncategorized';
+                  const isLast = index === group.transactions.length - 1;
+                  const isEditable = transaction.source === 'manual';
 
-                return (
-                  <View
-                    key={transaction.id}
-                    className="gap-3 rounded-2xl border border-border bg-card p-4">
-                    <View className="flex-row items-start justify-between gap-3">
-                      <View className="flex-1 gap-1">
-                        <Text className="font-semibold">
-                          {transaction.payee ??
-                            (transaction.kind === 'inflow' ? 'Manual inflow' : 'Manual outflow')}
-                        </Text>
-                        <Text className="text-sm text-muted-foreground">
-                          {toLocalDateKey(transaction.occurredAt)} · Budget month{' '}
-                          {toMonthKey(transaction.occurredAt)}
-                        </Text>
-                      </View>
-                      <View className="items-end gap-2">
+                  return (
+                    <Pressable
+                      key={transaction.id}
+                      className={isLast ? 'gap-1 p-5' : 'gap-1 border-b border-border p-5'}
+                      onPress={() => startEditing(transaction)}
+                      disabled={!isEditable}>
+                      <View className="flex-row items-start justify-between gap-3">
+                        <View className="flex-1 gap-1">
+                          <Text className="font-semibold">{transactionTitle(transaction)}</Text>
+                          <Text className="text-sm text-muted-foreground">
+                            {categoryLabel}
+                            {isEditable
+                              ? ' · Tap to edit'
+                              : ` · ${transactionSourceLabel(transaction.source)}`}
+                          </Text>
+                        </View>
                         <Text
+                          numberOfLines={1}
                           className={
                             transaction.amountCents < 0
-                              ? 'font-semibold text-destructive'
-                              : 'font-semibold'
+                              ? 'shrink-0 font-semibold text-destructive'
+                              : 'shrink-0 font-semibold'
                           }>
                           {formatCurrency(transaction.amountCents, budgetView.currencyCode)}
                         </Text>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onPress={() => startEditing(transaction)}>
-                          <Text>Edit</Text>
-                        </Button>
                       </View>
-                    </View>
-
-                    <View className="gap-1 rounded-xl bg-muted/40 p-3">
-                      <Text className="text-sm font-medium">{categoryLabel}</Text>
-                      <Text className="text-sm text-muted-foreground">
-                        {transaction.kind === 'inflow'
-                          ? 'Increases assignable cash for this transaction month.'
-                          : 'Reduces category availability in this transaction month.'}
-                      </Text>
-                      {transaction.memo ? (
+                      {transaction.memo && transaction.source !== 'starting_balance' ? (
                         <Text className="text-sm text-muted-foreground">{transaction.memo}</Text>
                       ) : null}
-                    </View>
-                  </View>
-                );
-              })
-            )}
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    </>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ))
+        )}
+      </ScreenScroll>
+    </SafeAreaView>
   );
 }
 
@@ -445,7 +384,7 @@ function createEmptyDraft(): TransactionDraft {
     transactionId: null,
     kind: 'outflow',
     amount: '',
-    occurredOn: toLocalDateKey(new Date()),
+    occurredOn: getLocalDateKey(),
     categoryId: null,
     payee: '',
     memo: '',

@@ -1,23 +1,37 @@
 import { Button } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
-import { DEFAULT_CATEGORY_GROUPS } from '@/src/features/budget/defaults';
-import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
-import { BudgetStatCard, FormField } from '@/src/features/budget/app-components';
 import {
+  CategoryChips,
+  ErrorBanner,
+  ErrorState,
+  FormField,
+  LoadingState,
+  ScreenScroll,
+} from '@/src/features/budget/app-components';
+import {
+  centsToDecimalString,
+  formatMonthLabel,
   getErrorMessage,
   parseRequiredPositiveAmountToCents,
 } from '@/src/features/budget/app-helpers';
+import { useAppShell } from '@/src/features/budget/app-shell';
 import { budgetAppStore } from '@/src/features/budget/app-store';
-import type { BudgetView, CompleteOnboardingInput } from '@/src/features/budget/types';
-import { router, Stack } from 'expo-router';
+import { DEFAULT_CATEGORY_GROUPS } from '@/src/features/budget/defaults';
+import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
+import type {
+  BudgetCategoryView,
+  BudgetView,
+  CompleteOnboardingInput,
+} from '@/src/features/budget/types';
+import { useFocusEffect } from '@react-navigation/native';
+import { router } from 'expo-router';
+import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import * as React from 'react';
-import { ActivityIndicator, Alert, ScrollView, TextInput, View } from 'react-native';
+import { Alert, Pressable, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const SCREEN_OPTIONS = {
-  title: 'Gengare',
-  headerShown: false,
-};
+const READY_SOURCE_ID = 'ready';
 
 type EditableCategory = {
   id: string;
@@ -30,13 +44,8 @@ type EditableGroup = {
   categories: EditableCategory[];
 };
 
-type MoveCategoryOption = {
-  id: string;
-  name: string;
-  groupName: string;
-};
-
 export default function Screen() {
+  const { refreshInboxCount, setOnboarded } = useAppShell();
   const [budgetView, setBudgetView] = React.useState<BudgetView | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -45,27 +54,38 @@ export default function Screen() {
   const [accountName, setAccountName] = React.useState('Main account');
   const [currencyCode, setCurrencyCode] = React.useState('RSD');
   const [startingBalance, setStartingBalance] = React.useState('0.00');
+  const [showAccountDetails, setShowAccountDetails] = React.useState(false);
+  const [showEnvelopeEditor, setShowEnvelopeEditor] = React.useState(false);
   const [groups, setGroups] = React.useState<EditableGroup[]>(() =>
     createEditableGroups(DEFAULT_CATEGORY_GROUPS)
   );
 
-  React.useEffect(() => {
-    void loadBudgetView();
-  }, []);
+  const loadBudgetView = React.useCallback(
+    async (options?: { showSpinner?: boolean }) => {
+      if (options?.showSpinner !== false) {
+        setIsLoading(true);
+      }
+      setLoadError(null);
 
-  async function loadBudgetView() {
-    setIsLoading(true);
-    setLoadError(null);
+      try {
+        const nextView = await budgetAppStore.getBudgetView(new Date());
+        setBudgetView(nextView);
+        setOnboarded(nextView !== null);
+      } catch (error) {
+        setLoadError(getErrorMessage(error));
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [setOnboarded]
+  );
 
-    try {
-      const nextView = await budgetAppStore.getBudgetView(new Date());
-      setBudgetView(nextView);
-    } catch (loadError) {
-      setLoadError(getErrorMessage(loadError));
-    } finally {
-      setIsLoading(false);
-    }
-  }
+  useFocusEffect(
+    React.useCallback(() => {
+      void loadBudgetView({ showSpinner: false });
+      void refreshInboxCount();
+    }, [loadBudgetView, refreshInboxCount])
+  );
 
   async function handleCreateBudget() {
     setIsSubmitting(true);
@@ -86,8 +106,10 @@ export default function Screen() {
       );
 
       setBudgetView(nextView);
-    } catch (submitError) {
-      const message = getErrorMessage(submitError);
+      setOnboarded(true);
+      await refreshInboxCount();
+    } catch (error) {
+      const message = getErrorMessage(error);
       setSubmitError(message);
       Alert.alert('Could not create budget', message);
     } finally {
@@ -95,37 +117,51 @@ export default function Screen() {
     }
   }
 
-  return (
-    <>
-      <Stack.Screen options={SCREEN_OPTIONS} />
-      <SafeAreaView className="flex-1 bg-background">
-        {isLoading ? (
-          <View className="flex-1 items-center justify-center gap-3">
-            <ActivityIndicator />
-            <Text className="text-muted-foreground">Loading local budget…</Text>
-          </View>
-        ) : loadError ? (
-          <View className="flex-1 justify-center gap-4 px-5">
-            <View className="gap-2 rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
-              <Text className="font-semibold text-destructive">Could not load local budget</Text>
-              <Text className="text-destructive">{loadError}</Text>
-            </View>
-            <Button onPress={() => void loadBudgetView()}>
-              <Text>Retry loading</Text>
-            </Button>
-          </View>
-        ) : budgetView ? (
-          <BudgetScreen budgetView={budgetView} onBudgetViewChange={setBudgetView} />
-        ) : (
-          <ScrollView className="flex-1" contentContainerClassName="gap-6 px-5 py-6">
-            <View className="gap-2">
-              <Text variant="h3">Bootstrap your local budget</Text>
-              <Text className="text-muted-foreground">
-                Create the first on-budget account, seed your category groups, and lock in the
-                starting balance that anchors the rest of the budget.
-              </Text>
-            </View>
+  const envelopePreview = groups
+    .flatMap((group) => group.categories.map((category) => category.name.trim()))
+    .filter(Boolean);
 
+  return (
+    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+      {isLoading ? (
+        <LoadingState message="Loading budget…" />
+      ) : loadError ? (
+        <ErrorState
+          title="Could not load budget"
+          message={loadError}
+          onRetry={() => void loadBudgetView({ showSpinner: true })}
+        />
+      ) : budgetView ? (
+        <BudgetScreen budgetView={budgetView} onBudgetViewChange={setBudgetView} />
+      ) : (
+        <ScreenScroll>
+          <View className="gap-2">
+            <Text variant="h3">Start with what’s in the bank</Text>
+            <Text className="text-muted-foreground">
+              That cash starts unassigned. Next you’ll tap envelopes and give it a job.
+            </Text>
+          </View>
+
+          <View className="gap-2">
+            <Text className="text-sm font-medium">Bank balance</Text>
+            <TextInput
+              className="rounded-2xl border border-border bg-card px-4 py-4 text-3xl font-bold text-foreground"
+              value={startingBalance}
+              onChangeText={setStartingBalance}
+              placeholder="0.00"
+              placeholderTextColor="#71717a"
+              keyboardType="decimal-pad"
+              autoFocus
+            />
+          </View>
+
+          <Pressable onPress={() => setShowAccountDetails((current) => !current)}>
+            <Text className="text-sm text-muted-foreground">
+              {showAccountDetails ? 'Hide account details' : `${accountName} · ${currencyCode}`}
+            </Text>
+          </Pressable>
+
+          {showAccountDetails ? (
             <View className="gap-3 rounded-2xl border border-border bg-card p-4">
               <FormField
                 label="Account name"
@@ -134,140 +170,153 @@ export default function Screen() {
                 placeholder="Main account"
               />
               <FormField
-                label="Currency code"
+                label="Currency"
                 value={currencyCode}
                 onChangeText={(value) => setCurrencyCode(value.toUpperCase())}
                 placeholder="RSD"
                 autoCapitalize="characters"
               />
-              <FormField
-                label="Starting balance"
-                value={startingBalance}
-                onChangeText={setStartingBalance}
-                placeholder="0.00"
-                keyboardType="decimal-pad"
-              />
+            </View>
+          ) : null}
+
+          <View className="gap-3">
+            <View className="flex-row items-center justify-between gap-3">
+              <Text variant="large">Envelopes</Text>
+              <Pressable onPress={() => setShowEnvelopeEditor((current) => !current)}>
+                <Text className="text-sm text-muted-foreground">
+                  {showEnvelopeEditor ? 'Done' : 'Edit'}
+                </Text>
+              </Pressable>
             </View>
 
-            <View className="gap-3">
-              <View className="flex-row items-center justify-between">
-                <Text variant="large">Category groups</Text>
+            {showEnvelopeEditor ? (
+              <View className="gap-3">
                 <Button
                   size="sm"
                   variant="outline"
                   onPress={() => setGroups((current) => [...current, createEmptyGroup()])}>
                   <Text>Add group</Text>
                 </Button>
-              </View>
 
-              {groups.map((group, groupIndex) => (
-                <View key={group.id} className="gap-3 rounded-2xl border border-border bg-card p-4">
-                  <View className="flex-row items-center justify-between gap-3">
-                    <View className="flex-1">
-                      <FormField
-                        label={`Group ${groupIndex + 1}`}
-                        value={group.name}
-                        onChangeText={(value) => {
-                          setGroups((current) =>
-                            current.map((entry) =>
-                              entry.id === group.id ? { ...entry, name: value } : entry
-                            )
-                          );
-                        }}
-                        placeholder="Essentials"
-                      />
+                {groups.map((group) => (
+                  <View
+                    key={group.id}
+                    className="gap-3 rounded-2xl border border-border bg-card p-4">
+                    <View className="flex-row items-center gap-2">
+                      <View className="flex-1">
+                        <TextInput
+                          className="rounded-xl border border-border bg-background px-4 py-3 text-base font-semibold text-foreground"
+                          value={group.name}
+                          onChangeText={(value) => {
+                            setGroups((current) =>
+                              current.map((entry) =>
+                                entry.id === group.id ? { ...entry, name: value } : entry
+                              )
+                            );
+                          }}
+                          placeholder="Group name"
+                          placeholderTextColor="#71717a"
+                        />
+                      </View>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onPress={() => {
+                          setGroups((current) => current.filter((entry) => entry.id !== group.id));
+                        }}>
+                        <Text>Remove</Text>
+                      </Button>
                     </View>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onPress={() => {
-                        setGroups((current) => current.filter((entry) => entry.id !== group.id));
-                      }}>
-                      <Text>Remove</Text>
-                    </Button>
-                  </View>
 
-                  <View className="gap-2">
-                    {group.categories.map((category, categoryIndex) => (
-                      <View key={category.id} className="flex-row items-end gap-2">
-                        <View className="flex-1">
-                          <FormField
-                            label={`Category ${categoryIndex + 1}`}
-                            value={category.name}
-                            onChangeText={(value) => {
+                    <View className="gap-2">
+                      {group.categories.map((category) => (
+                        <View key={category.id} className="flex-row items-center gap-2">
+                          <View className="flex-1">
+                            <TextInput
+                              className="rounded-xl border border-border bg-background px-4 py-3 text-foreground"
+                              value={category.name}
+                              onChangeText={(value) => {
+                                setGroups((current) =>
+                                  current.map((entry) =>
+                                    entry.id !== group.id
+                                      ? entry
+                                      : {
+                                          ...entry,
+                                          categories: entry.categories.map((item) =>
+                                            item.id === category.id
+                                              ? { ...item, name: value }
+                                              : item
+                                          ),
+                                        }
+                                  )
+                                );
+                              }}
+                              placeholder="Category name"
+                              placeholderTextColor="#71717a"
+                            />
+                          </View>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onPress={() => {
                               setGroups((current) =>
                                 current.map((entry) =>
                                   entry.id !== group.id
                                     ? entry
                                     : {
                                         ...entry,
-                                        categories: entry.categories.map((item) =>
-                                          item.id === category.id ? { ...item, name: value } : item
+                                        categories: entry.categories.filter(
+                                          (item) => item.id !== category.id
                                         ),
                                       }
                                 )
                               );
-                            }}
-                            placeholder="Groceries"
-                          />
+                            }}>
+                            <Text>Remove</Text>
+                          </Button>
                         </View>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onPress={() => {
-                            setGroups((current) =>
-                              current.map((entry) =>
-                                entry.id !== group.id
-                                  ? entry
-                                  : {
-                                      ...entry,
-                                      categories: entry.categories.filter(
-                                        (item) => item.id !== category.id
-                                      ),
-                                    }
-                              )
-                            );
-                          }}>
-                          <Text>Remove</Text>
-                        </Button>
-                      </View>
-                    ))}
+                      ))}
+                    </View>
+
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onPress={() => {
+                        setGroups((current) =>
+                          current.map((entry) =>
+                            entry.id !== group.id
+                              ? entry
+                              : {
+                                  ...entry,
+                                  categories: [...entry.categories, createEmptyCategory()],
+                                }
+                          )
+                        );
+                      }}>
+                      <Text>Add category</Text>
+                    </Button>
                   </View>
-
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onPress={() => {
-                      setGroups((current) =>
-                        current.map((entry) =>
-                          entry.id !== group.id
-                            ? entry
-                            : {
-                                ...entry,
-                                categories: [...entry.categories, createEmptyCategory()],
-                              }
-                        )
-                      );
-                    }}>
-                    <Text>Add category</Text>
-                  </Button>
-                </View>
-              ))}
-            </View>
-
-            {submitError ? (
-              <View className="rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
-                <Text className="text-destructive">{submitError}</Text>
+                ))}
               </View>
-            ) : null}
+            ) : (
+              <View className="flex-row flex-wrap gap-2">
+                {envelopePreview.map((name, index) => (
+                  <View key={`${name}-${index}`} className="rounded-full bg-muted px-3 py-1.5">
+                    <Text className="text-sm">{name}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
 
-            <Button onPress={handleCreateBudget} disabled={isSubmitting}>
-              <Text>{isSubmitting ? 'Creating budget…' : 'Create budget'}</Text>
-            </Button>
-          </ScrollView>
-        )}
-      </SafeAreaView>
-    </>
+          {submitError ? <ErrorBanner message={submitError} /> : null}
+
+          <Button onPress={() => void handleCreateBudget()} disabled={isSubmitting}>
+            <Text>{isSubmitting ? 'Creating budget…' : 'Start budgeting'}</Text>
+          </Button>
+        </ScreenScroll>
+      )}
+    </SafeAreaView>
   );
 }
 
@@ -278,253 +327,385 @@ function BudgetScreen({
   budgetView: BudgetView;
   onBudgetViewChange: React.Dispatch<React.SetStateAction<BudgetView | null>>;
 }) {
+  const { inboxCount } = useAppShell();
   const [assignmentDrafts, setAssignmentDrafts] = React.useState<Record<string, string>>({});
-  const [moveAmount, setMoveAmount] = React.useState('');
-  const [moveFromCategoryId, setMoveFromCategoryId] = React.useState<string | null>(null);
-  const [moveToCategoryId, setMoveToCategoryId] = React.useState<string | null>(null);
+  const [expandedCategoryId, setExpandedCategoryId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [isUpdatingBudget, setIsUpdatingBudget] = React.useState(false);
-  const categoryOptions = React.useMemo<MoveCategoryOption[]>(
-    () =>
-      budgetView.categoryGroups.flatMap((group) =>
-        group.categories.map((category) => ({
-          id: category.id,
-          name: category.name,
-          groupName: group.name,
-        }))
-      ),
-    [budgetView]
+
+  const readyToAssignCents = budgetView.moneyState.assignableCash.amountCents;
+  const overspentCategories = budgetView.categoryGroups.flatMap((group) =>
+    group.categories.filter((category) => category.availableCents < 0)
+  );
+  const moveSources = budgetView.categoryGroups.flatMap((group) =>
+    group.categories
+      .filter((category) => category.availableCents > 0 && category.id !== expandedCategoryId)
+      .map((category) => ({
+        id: category.id,
+        label: `${category.name} · ${formatCurrency(category.availableCents, budgetView.currencyCode)}`,
+      }))
   );
 
-  React.useEffect(() => {
-    setMoveFromCategoryId((current) => {
-      if (current && categoryOptions.some((option) => option.id === current)) {
-        return current;
-      }
-
-      return categoryOptions[0]?.id ?? null;
-    });
-  }, [categoryOptions]);
-
-  React.useEffect(() => {
-    setMoveToCategoryId((current) => {
-      if (
-        current &&
-        current !== moveFromCategoryId &&
-        categoryOptions.some((option) => option.id === current)
-      ) {
-        return current;
-      }
-
-      return categoryOptions.find((option) => option.id !== moveFromCategoryId)?.id ?? null;
-    });
-  }, [categoryOptions, moveFromCategoryId]);
-
-  async function handleAssignMoney(categoryId: string) {
+  async function runBudgetUpdate(action: () => Promise<BudgetView>, failureTitle: string) {
     setIsUpdatingBudget(true);
     setActionError(null);
 
     try {
-      const nextView = await budgetAppStore.assignMoneyToCategory(
-        {
-          categoryId,
-          amountCents: parseRequiredPositiveAmountToCents(
-            assignmentDrafts[categoryId] ?? '',
-            'Assignment amount'
-          ),
-        },
-        new Date()
-      );
-
-      onBudgetViewChange(nextView);
-      setAssignmentDrafts((current) => ({
-        ...current,
-        [categoryId]: '',
-      }));
+      onBudgetViewChange(await action());
     } catch (error) {
       const message = getErrorMessage(error);
       setActionError(message);
-      Alert.alert('Could not assign money', message);
+      Alert.alert(failureTitle, message);
     } finally {
       setIsUpdatingBudget(false);
     }
   }
 
-  async function handleMoveMoney() {
-    setIsUpdatingBudget(true);
-    setActionError(null);
-
-    try {
-      if (!moveFromCategoryId || !moveToCategoryId) {
-        throw new Error('Pick both a source and destination category.');
-      }
-
-      const nextView = await budgetAppStore.moveMoneyBetweenCategories(
-        {
-          fromCategoryId: moveFromCategoryId,
-          toCategoryId: moveToCategoryId,
-          amountCents: parseRequiredPositiveAmountToCents(moveAmount, 'Move amount'),
-        },
-        new Date()
-      );
-
-      onBudgetViewChange(nextView);
-      setMoveAmount('');
-    } catch (error) {
-      const message = getErrorMessage(error);
-      setActionError(message);
-      Alert.alert('Could not move money', message);
-    } finally {
-      setIsUpdatingBudget(false);
-    }
+  function readDraftAmount(categoryId: string, amountCents?: number) {
+    return (
+      amountCents ??
+      parseRequiredPositiveAmountToCents(assignmentDrafts[categoryId] ?? '', 'Amount')
+    );
   }
 
-  const selectedMoveFrom =
-    categoryOptions.find((option) => option.id === moveFromCategoryId) ?? null;
-  const selectedMoveTo = categoryOptions.find((option) => option.id === moveToCategoryId) ?? null;
+  async function handleAssignMoney(categoryId: string, amountCents?: number) {
+    await runBudgetUpdate(
+      () =>
+        budgetAppStore.assignMoneyToCategory(
+          {
+            categoryId,
+            amountCents: readDraftAmount(categoryId, amountCents),
+          },
+          new Date()
+        ),
+      'Could not assign money'
+    );
+
+    setAssignmentDrafts((current) => ({
+      ...current,
+      [categoryId]: '',
+    }));
+    setExpandedCategoryId(null);
+  }
+
+  async function handleMoveMoney(
+    fromCategoryId: string,
+    toCategoryId: string,
+    amountCents?: number
+  ) {
+    await runBudgetUpdate(
+      () =>
+        budgetAppStore.moveMoneyBetweenCategories(
+          {
+            fromCategoryId,
+            toCategoryId,
+            amountCents: readDraftAmount(toCategoryId, amountCents),
+          },
+          new Date()
+        ),
+      'Could not move money'
+    );
+
+    setAssignmentDrafts((current) => ({
+      ...current,
+      [toCategoryId]: '',
+    }));
+    setExpandedCategoryId(null);
+  }
 
   return (
-    <ScrollView className="flex-1" contentContainerClassName="gap-6 px-5 py-6">
-      <View className="flex-row items-start justify-between gap-3">
-        <View className="gap-1">
-          <Text variant="h3">{budgetView.accountName}</Text>
-          <Text className="text-muted-foreground">
-            Current month: <Text variant="code">{budgetView.monthKey}</Text>
-          </Text>
-        </View>
-        <View className="flex-row gap-2">
-          <Button size="sm" variant="outline" onPress={() => router.push('./inbox')}>
-            <Text>Inbox</Text>
-          </Button>
-          <Button size="sm" variant="outline" onPress={() => router.push('./transactions')}>
-            <Text>Transactions</Text>
-          </Button>
-        </View>
+    <ScreenScroll>
+      <View className="gap-1 pr-14">
+        <Text className="text-sm text-muted-foreground">{budgetView.accountName}</Text>
+        <Text variant="h3">{formatMonthLabel(budgetView.monthKey)}</Text>
       </View>
 
-      <View className="gap-3">
-        <BudgetStatCard
-          label="Account balance"
-          value={formatCurrency(
-            budgetView.moneyState.accountBalance.amountCents,
-            budgetView.currencyCode
-          )}
-          helper="Latest non-ignored bank balance evidence."
-        />
-        <BudgetStatCard
-          label="Ready to assign"
-          value={formatCurrency(
-            budgetView.moneyState.assignableCash.amountCents,
-            budgetView.currencyCode
-          )}
-          helper="Approved uncategorized cash available this month."
-          valueClassName={
-            budgetView.moneyState.assignableCash.amountCents < 0 ? 'text-destructive' : undefined
-          }
-        />
-      </View>
-
-      <View className="gap-3 rounded-2xl border border-border bg-card p-4">
-        <Text variant="large">Move money</Text>
-        {categoryOptions.length < 2 ? (
-          <Text className="text-sm text-muted-foreground">
-            Create at least two categories before moving money between them.
-          </Text>
-        ) : (
-          <>
-            <Text className="text-sm text-muted-foreground">
-              From {formatMoveCategoryLabel(selectedMoveFrom)} to{' '}
-              {formatMoveCategoryLabel(selectedMoveTo)}
-            </Text>
-            <View className="gap-2">
-              <Text className="text-sm font-medium">Amount</Text>
-              <TextInput
-                className="rounded-xl border border-border bg-background px-4 py-3 text-foreground"
-                value={moveAmount}
-                onChangeText={setMoveAmount}
-                placeholder="0.00"
-                placeholderTextColor="#71717a"
-                keyboardType="decimal-pad"
-              />
-            </View>
-            <Button
-              onPress={() => void handleMoveMoney()}
-              disabled={isUpdatingBudget || !moveFromCategoryId || !moveToCategoryId}>
-              <Text>{isUpdatingBudget ? 'Updating budget…' : 'Move money'}</Text>
-            </Button>
-          </>
+      <ReadyToAssignCard
+        amount={formatCurrency(readyToAssignCents, budgetView.currencyCode)}
+        bankBalance={formatCurrency(
+          budgetView.moneyState.accountBalance.amountCents,
+          budgetView.currencyCode
         )}
-      </View>
+        amountCents={readyToAssignCents}
+      />
 
-      {actionError ? (
-        <View className="rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
-          <Text className="text-destructive">{actionError}</Text>
-        </View>
+      {inboxCount > 0 ? (
+        <Pressable
+          className="rounded-2xl mt-1 border border-amber-500/30 bg-amber-500/10 p-4 active:bg-amber-500/20"
+          onPress={() => router.push('/inbox')}>
+          <Text className="font-medium">
+            {inboxCount === 1 ? '1 bank message waiting' : `${inboxCount} bank messages waiting`}
+          </Text>
+          <Text className="text-sm text-muted-foreground">
+            Review in Inbox, then it hits the budget.
+          </Text>
+        </Pressable>
       ) : null}
 
+      {overspentCategories.length > 0 ? (
+        <Pressable
+          className="gap-1 rounded-2xl mt  border border-destructive/30 bg-destructive/10 p-4"
+          onPress={() => setExpandedCategoryId(overspentCategories[0].id)}>
+          <Text className="font-medium text-destructive">
+            {overspentCategories.length === 1
+              ? `${overspentCategories[0].name} is overspent`
+              : `${overspentCategories.length} envelopes are overspent`}
+          </Text>
+          <Text className="text-sm text-muted-foreground">
+            Cover it from Ready to Assign or another envelope.
+          </Text>
+        </Pressable>
+      ) : null}
+
+      {actionError ? <ErrorBanner message={actionError} /> : null}
+
       <View className="gap-3">
-        <Text variant="large">Budget</Text>
+        <View className="gap-1">
+          <View className="flex-row items-center justify-between gap-3">
+            <Text variant="large">Envelopes</Text>
+            <Text className="text-xs uppercase text-muted-foreground">Available</Text>
+          </View>
+          {readyToAssignCents > 0 ? (
+            <Text className="text-sm text-muted-foreground">
+              Tap an envelope to give this money a job.
+            </Text>
+          ) : null}
+        </View>
+
         {budgetView.categoryGroups.map((group) => (
-          <View key={group.id} className="gap-3 rounded-2xl border border-border bg-card p-4">
-            <Text className="text-lg font-semibold">{group.name}</Text>
-            {group.categories.map((category) => (
-              <View key={category.id} className="gap-1 rounded-xl bg-muted/40 p-3">
-                <View className="flex-row items-center justify-between gap-3">
-                  <Text className="font-medium">{category.name}</Text>
-                  <Text className={category.availableCents < 0 ? 'text-destructive' : undefined}>
-                    {formatCurrency(category.availableCents, budgetView.currencyCode)}
-                  </Text>
-                </View>
-                <Text className="text-sm text-muted-foreground">
-                  Assigned {formatCurrency(category.assignedCents, budgetView.currencyCode)} ·
-                  Activity {formatCurrency(category.activityCents, budgetView.currencyCode)}
-                </Text>
-                <View className="mt-2 flex-row items-end gap-2">
-                  <View className="flex-1 gap-2">
-                    <Text className="text-sm font-medium">Assign this month</Text>
-                    <TextInput
-                      className="rounded-xl border border-border bg-background px-4 py-3 text-foreground"
-                      value={assignmentDrafts[category.id] ?? ''}
-                      onChangeText={(value) => {
-                        setAssignmentDrafts((current) => ({
-                          ...current,
-                          [category.id]: value,
-                        }));
-                      }}
-                      placeholder="0.00"
-                      placeholderTextColor="#71717a"
-                      keyboardType="decimal-pad"
-                    />
-                  </View>
-                  <Button
-                    size="sm"
-                    onPress={() => void handleAssignMoney(category.id)}
-                    disabled={isUpdatingBudget}>
-                    <Text>{isUpdatingBudget ? 'Saving…' : 'Assign'}</Text>
-                  </Button>
-                </View>
-                <View className="mt-2 flex-row gap-2">
-                  <Button
-                    size="sm"
-                    variant={moveFromCategoryId === category.id ? 'secondary' : 'outline'}
-                    onPress={() => setMoveFromCategoryId(category.id)}
-                    disabled={categoryOptions.length < 2 || isUpdatingBudget}>
-                    <Text>Set from</Text>
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={moveToCategoryId === category.id ? 'secondary' : 'outline'}
-                    onPress={() => setMoveToCategoryId(category.id)}
-                    disabled={categoryOptions.length < 2 || isUpdatingBudget}>
-                    <Text>Set to</Text>
-                  </Button>
-                </View>
-              </View>
+          <View key={group.id} className="overflow-hidden rounded-2xl border border-border bg-card">
+            <View className="border-b border-border px-5 py-3">
+              <Text className="font-semibold">{group.name}</Text>
+            </View>
+            {group.categories.map((category, categoryIndex) => (
+              <CategoryRow
+                key={category.id}
+                category={category}
+                currencyCode={budgetView.currencyCode}
+                isExpanded={expandedCategoryId === category.id}
+                isLast={categoryIndex === group.categories.length - 1}
+                draft={assignmentDrafts[category.id] ?? ''}
+                isUpdating={isUpdatingBudget}
+                readyToAssignCents={readyToAssignCents}
+                moveSources={moveSources}
+                onToggle={() =>
+                  setExpandedCategoryId((current) => (current === category.id ? null : category.id))
+                }
+                onDraftChange={(value) => {
+                  setAssignmentDrafts((current) => ({
+                    ...current,
+                    [category.id]: value,
+                  }));
+                }}
+                onAssignFromReady={(amountCents) =>
+                  void handleAssignMoney(category.id, amountCents)
+                }
+                onMoveFrom={(fromCategoryId, amountCents) =>
+                  void handleMoveMoney(fromCategoryId, category.id, amountCents)
+                }
+              />
             ))}
           </View>
         ))}
       </View>
-    </ScrollView>
+    </ScreenScroll>
+  );
+}
+
+function ReadyToAssignCard({
+  amount,
+  bankBalance,
+  amountCents,
+}: {
+  amount: string;
+  bankBalance: string;
+  amountCents: number;
+}) {
+  const helper =
+    amountCents > 0
+      ? 'This is leftover cash. Put it in envelopes below.'
+      : amountCents < 0
+        ? "You've given envelopes more than you have. Move money around."
+        : 'Every dinar has a job.';
+
+  return (
+    <View className="gap-4 rounded-2xl border border-border bg-card p-5">
+      <View className="gap-1">
+        <Text className="text-sm text-muted-foreground">To assign</Text>
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.6}
+          className={
+            amountCents < 0
+              ? 'text-3xl font-bold text-destructive'
+              : amountCents === 0
+                ? 'text-3xl font-bold text-muted-foreground'
+                : 'text-3xl font-bold'
+          }>
+          {amount}
+        </Text>
+      </View>
+      <View className="flex-row items-baseline justify-between gap-3">
+        <Text className="text-sm text-muted-foreground">In the bank</Text>
+        <Text className="text-base font-semibold" numberOfLines={1}>
+          {bankBalance}
+        </Text>
+      </View>
+      <Text className="text-muted-foreground">{helper}</Text>
+    </View>
+  );
+}
+
+function CategoryRow({
+  category,
+  currencyCode,
+  isExpanded,
+  isLast,
+  draft,
+  isUpdating,
+  readyToAssignCents,
+  moveSources,
+  onToggle,
+  onDraftChange,
+  onAssignFromReady,
+  onMoveFrom,
+}: {
+  category: BudgetCategoryView;
+  currencyCode: string;
+  isExpanded: boolean;
+  isLast: boolean;
+  draft: string;
+  isUpdating: boolean;
+  readyToAssignCents: number;
+  moveSources: { id: string; label: string }[];
+  onToggle: () => void;
+  onDraftChange: (value: string) => void;
+  onAssignFromReady: (amountCents?: number) => void;
+  onMoveFrom: (fromCategoryId: string, amountCents?: number) => void;
+}) {
+  const isOverspent = category.availableCents < 0;
+  const overspendCents = isOverspent ? Math.abs(category.availableCents) : 0;
+  const [sourceId, setSourceId] = React.useState(
+    readyToAssignCents > 0 ? READY_SOURCE_ID : (moveSources[0]?.id ?? READY_SOURCE_ID)
+  );
+
+  React.useEffect(() => {
+    if (!isExpanded) {
+      return;
+    }
+
+    onDraftChange(isOverspent ? centsToDecimalString(overspendCents) : '');
+    setSourceId(readyToAssignCents > 0 ? READY_SOURCE_ID : (moveSources[0]?.id ?? READY_SOURCE_ID));
+    // Prefill only when a row is opened, not on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isExpanded, category.id]);
+
+  const sourceOptions = [
+    {
+      id: READY_SOURCE_ID,
+      label: `Ready to assign · ${formatCurrency(readyToAssignCents, currencyCode)}`,
+    },
+    ...moveSources,
+  ];
+  const canSubmit =
+    sourceId === READY_SOURCE_ID || moveSources.some((source) => source.id === sourceId);
+
+  function submit(amountCents?: number) {
+    if (sourceId === READY_SOURCE_ID) {
+      onAssignFromReady(amountCents);
+      return;
+    }
+
+    onMoveFrom(sourceId, amountCents);
+  }
+
+  return (
+    <View className={isLast ? undefined : 'border-b border-border'}>
+      <Pressable className="gap-1 px-5 py-4 active:bg-muted/40" onPress={onToggle}>
+        <View className="flex-row items-center justify-between gap-3">
+          <Text className="flex-1 font-medium">{category.name}</Text>
+          <View className="flex-row items-center gap-2">
+            <Text
+              className={
+                isOverspent
+                  ? 'text-base font-semibold text-destructive'
+                  : category.availableCents === 0
+                    ? 'text-base font-semibold text-muted-foreground'
+                    : 'text-base font-semibold'
+              }>
+              {formatCurrency(category.availableCents, currencyCode)}
+            </Text>
+            <Icon
+              as={isExpanded ? ChevronUp : ChevronDown}
+              className="text-muted-foreground"
+              size={16}
+            />
+          </View>
+        </View>
+        <View className="flex-row items-center justify-between gap-3">
+          <Text className="text-sm text-muted-foreground">
+            Assigned {formatCurrency(category.assignedCents, currencyCode)} · Spent{' '}
+            {formatCurrency(Math.abs(Math.min(category.activityCents, 0)), currencyCode)}
+          </Text>
+          {isOverspent ? (
+            <Text className="text-xs font-medium uppercase text-destructive">Overspent</Text>
+          ) : null}
+        </View>
+      </Pressable>
+
+      {isExpanded ? (
+        <View className="gap-3 border-t border-border bg-muted/20 px-5 py-4">
+          {isOverspent ? (
+            <Text className="text-sm text-destructive">
+              Cover {formatCurrency(overspendCents, currencyCode)} to get this back to zero.
+            </Text>
+          ) : null}
+
+          <FormField
+            label="Amount"
+            value={draft}
+            onChangeText={onDraftChange}
+            placeholder={readyToAssignCents > 0 ? centsToDecimalString(readyToAssignCents) : '0.00'}
+            keyboardType="decimal-pad"
+          />
+
+          <View className="gap-2">
+            <Text className="text-sm font-medium">Take it from</Text>
+            <CategoryChips
+              options={sourceOptions}
+              selectedId={sourceId}
+              onSelect={setSourceId}
+              disabled={isUpdating}
+            />
+          </View>
+
+          {readyToAssignCents > 0 && sourceId === READY_SOURCE_ID && !isOverspent ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onPress={() => onAssignFromReady(readyToAssignCents)}
+              disabled={isUpdating}>
+              <Text>Assign all {formatCurrency(readyToAssignCents, currencyCode)}</Text>
+            </Button>
+          ) : null}
+
+          <Button onPress={() => submit()} disabled={isUpdating || !canSubmit}>
+            <Text>
+              {isUpdating
+                ? 'Saving…'
+                : sourceId === READY_SOURCE_ID
+                  ? isOverspent
+                    ? 'Cover from Ready to Assign'
+                    : readyToAssignCents <= 0
+                      ? 'Assign anyway'
+                      : `Add to ${category.name}`
+                  : 'Move into this envelope'}
+            </Text>
+          </Button>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -552,14 +733,6 @@ function createEmptyCategory(): EditableCategory {
     id: createClientId('category'),
     name: '',
   };
-}
-
-function formatMoveCategoryLabel(category: MoveCategoryOption | null) {
-  if (!category) {
-    return 'nothing';
-  }
-
-  return `${category.groupName} / ${category.name}`;
 }
 
 let clientIdCounter = 1;
