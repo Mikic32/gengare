@@ -1,7 +1,8 @@
 import { parseBackup, serializeBackup } from './backup';
 import { deriveBudgetView, toMonthKey } from './budget-engine';
-import { orchestrateSmsImport } from './import-orchestration';
+import { DEBUG_BANK_ALLOWED_SENDERS, orchestrateSmsImport } from './import-orchestration';
 import { applyCreateManualTransaction, applyUpdateManualTransaction } from './manual-transactions';
+import { createNoopNativeSmsQueue, type NativeSmsQueuePort } from './native-sms-queue';
 import { applyCompleteOnboarding } from './onboarding';
 import { applyCreateReconciliationAdjustment } from './reconciliation';
 import { deriveMonthlyReport } from './reports';
@@ -106,6 +107,7 @@ export type BudgetStore = {
     confirmation: RestoreBackupConfirmation,
     now?: Date
   ): Promise<BudgetView | null>;
+  importQueuedSms(now?: Date): Promise<DebugSmsImportResult[]>;
 };
 
 const EMPTY_SNAPSHOT: BudgetSnapshot = {
@@ -119,7 +121,10 @@ const EMPTY_SNAPSHOT: BudgetSnapshot = {
   importOutcomes: [],
 };
 
-export function createBudgetStore(storage: BudgetStorage): BudgetStore {
+export function createBudgetStore(
+  storage: BudgetStorage,
+  smsQueue: NativeSmsQueuePort = createNoopNativeSmsQueue()
+): BudgetStore {
   let mutationChain = Promise.resolve();
 
   async function waitForPendingMutations() {
@@ -133,6 +138,36 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
       () => undefined
     );
     return result;
+  }
+
+  async function importOneSms(
+    input: DebugSmsImportInput,
+    now: Date
+  ): Promise<DebugSmsImportResult> {
+    const snapshot = await storage.readSnapshot();
+    assertBudgetExists(snapshot);
+    const createdAt = now.toISOString();
+    const importResult = orchestrateSmsImport({
+      snapshot,
+      sms: input,
+      createdAt,
+      ids: {
+        rawSmsMessageId: createRawSmsMessageId(snapshot),
+        parseResultId: createSmsParseResultId(snapshot),
+        transactionId: createTransactionId(snapshot),
+        importOutcomeId: createImportOutcomeId(snapshot),
+      },
+    });
+
+    const nextSnapshot = appendImportedSmsFactsToSnapshot(snapshot, importResult);
+
+    await storage.appendImportedSmsFacts(importResult);
+    return {
+      budgetView: deriveBudgetView(nextSnapshot, now),
+      parseResult: importResult.parseResult,
+      transaction: importResult.candidateTransaction,
+      importOutcome: importResult.importOutcome,
+    };
   }
 
   return {
@@ -349,31 +384,25 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
     },
 
     async importDebugSms(input, now = new Date()) {
+      return runSerializedMutation(() => importOneSms(input, now));
+    },
+
+    async importQueuedSms(now = new Date()) {
       return runSerializedMutation(async () => {
+        await smsQueue.setAllowedSenders(DEBUG_BANK_ALLOWED_SENDERS);
         const snapshot = await storage.readSnapshot();
-        assertBudgetExists(snapshot);
-        const createdAt = now.toISOString();
-        const importResult = orchestrateSmsImport({
-          snapshot,
-          sms: input,
-          createdAt,
-          ids: {
-            rawSmsMessageId: createRawSmsMessageId(snapshot),
-            parseResultId: createSmsParseResultId(snapshot),
-            transactionId: createTransactionId(snapshot),
-            importOutcomeId: createImportOutcomeId(snapshot),
-          },
-        });
+        if (!snapshot.account) {
+          return [];
+        }
 
-        const nextSnapshot = appendImportedSmsFactsToSnapshot(snapshot, importResult);
+        const payloads = await smsQueue.drain();
+        const importResults: DebugSmsImportResult[] = [];
 
-        await storage.appendImportedSmsFacts(importResult);
-        return {
-          budgetView: deriveBudgetView(nextSnapshot, now),
-          parseResult: importResult.parseResult,
-          transaction: importResult.candidateTransaction,
-          importOutcome: importResult.importOutcome,
-        };
+        for (const payload of payloads) {
+          importResults.push(await importOneSms(payload, now));
+        }
+
+        return importResults;
       });
     },
 

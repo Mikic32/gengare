@@ -11,7 +11,17 @@ import type {
   SmsParseResult,
 } from './types';
 
-const DEBUG_BANK_ALLOWED_SENDERS = new Set(['BANK']);
+export const DEBUG_BANK_ALLOWED_SENDERS = ['BANK'] as const;
+
+export function isAllowedSender(
+  sender: string,
+  allowedSenders: readonly string[] = DEBUG_BANK_ALLOWED_SENDERS
+) {
+  const normalizedSender = sender.trim().toUpperCase();
+  return allowedSenders.some(
+    (allowedSender) => allowedSender.trim().toUpperCase() === normalizedSender
+  );
+}
 
 export type InboundSmsInput = {
   sender: string;
@@ -213,17 +223,15 @@ function normalizeOccurredAt(value: string) {
   return occurredAt.toISOString();
 }
 
-function isAllowedSender(sender: string) {
-  return DEBUG_BANK_ALLOWED_SENDERS.has(sender.trim().toUpperCase());
-}
-
 function isBeforeTrackingCutover(snapshot: BudgetSnapshot, occurredAt: string) {
   const cutover = getTrackingCutover(snapshot);
   return occurredAt.localeCompare(cutover) < 0;
 }
 
 function getTrackingCutover(snapshot: BudgetSnapshot) {
-  const startingBalance = snapshot.transactions.find((transaction) => transaction.source === 'starting_balance');
+  const startingBalance = snapshot.transactions.find(
+    (transaction) => transaction.source === 'starting_balance'
+  );
   return startingBalance?.occurredAt ?? snapshot.account?.createdAt ?? '';
 }
 

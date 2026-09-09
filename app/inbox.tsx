@@ -96,7 +96,7 @@ export default function InboxScreen() {
       setLoadError(null);
 
       try {
-        const nextScreenData = await budgetAppStore.loadInboxScreenData(new Date());
+        const nextScreenData = await budgetAppStore.drainQueuedSms(new Date());
         setScreenData(nextScreenData);
         await refreshInboxCount();
       } catch (error) {

@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.mikic32.gengare'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.smsqueue"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}

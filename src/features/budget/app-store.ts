@@ -1,4 +1,5 @@
 import { createBudgetAppStore } from './app-module';
+import { createPlatformSmsQueue } from './sms-queue';
 import { createAppBudgetStorage } from './storage';
 import { createBudgetStore } from './store';
 
@@ -11,4 +12,6 @@ export type {
   TransactionsScreenData,
 } from './app-module';
 
-export const budgetAppStore = createBudgetAppStore(createBudgetStore(createAppBudgetStorage()));
+export const budgetAppStore = createBudgetAppStore(
+  createBudgetStore(createAppBudgetStorage(), createPlatformSmsQueue())
+);

@@ -84,6 +84,7 @@ export type BudgetAppStore = {
     confirmation: RestoreBackupConfirmation,
     now?: Date
   ): Promise<BudgetView | null>;
+  drainQueuedSms(now?: Date): Promise<InboxScreenData>;
 };
 
 export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
@@ -209,6 +210,13 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
 
     restoreBackup(serialized, confirmation, now = new Date()) {
       return store.restoreBackup(serialized, confirmation, now);
+    },
+
+    async drainQueuedSms(now = new Date()) {
+      const importResults = await store.importQueuedSms(now);
+      const budgetView =
+        importResults.at(-1)?.budgetView ?? (await store.getCurrentBudgetView(now));
+      return hydrateInboxScreenData(budgetView);
     },
   };
 }
