@@ -1,3 +1,4 @@
+import { parseBackup, serializeBackup } from './backup';
 import { deriveBudgetView, toMonthKey } from './budget-engine';
 import { orchestrateSmsImport } from './import-orchestration';
 import { applyCreateManualTransaction, applyUpdateManualTransaction } from './manual-transactions';
@@ -70,6 +71,10 @@ export type DebugSmsImportResult = {
   importOutcome: ImportOutcome;
 };
 
+export type RestoreBackupConfirmation = {
+  confirmed: boolean;
+};
+
 export type BudgetStore = {
   getCurrentBudgetView(now?: Date): Promise<BudgetView | null>;
   getMonthlyReport(monthKey: string): Promise<MonthlyReport | null>;
@@ -95,6 +100,12 @@ export type BudgetStore = {
   ignoreUnparseableSms(input: IgnoreUnparseableSmsInput, now?: Date): Promise<BudgetView>;
   createReconciliationAdjustment(now?: Date): Promise<BudgetView>;
   importDebugSms(input: DebugSmsImportInput, now?: Date): Promise<DebugSmsImportResult>;
+  exportBackup(now?: Date): Promise<string>;
+  restoreBackup(
+    serialized: string,
+    confirmation: RestoreBackupConfirmation,
+    now?: Date
+  ): Promise<BudgetView | null>;
 };
 
 const EMPTY_SNAPSHOT: BudgetSnapshot = {
@@ -363,6 +374,30 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
           transaction: importResult.candidateTransaction,
           importOutcome: importResult.importOutcome,
         };
+      });
+    },
+
+    async exportBackup(now = new Date()) {
+      return runSerializedMutation(async () => {
+        const snapshot = await storage.readSnapshot();
+        return serializeBackup(snapshot, now);
+      });
+    },
+
+    async restoreBackup(serialized, confirmation, now = new Date()) {
+      return runSerializedMutation(async () => {
+        if (confirmation.confirmed !== true) {
+          throw new Error('Restore requires explicit confirmation.');
+        }
+
+        const snapshot = parseBackup(serialized);
+        await storage.replaceSnapshot(snapshot);
+
+        if (!snapshot.account) {
+          return null;
+        }
+
+        return deriveBudgetView(snapshot, now);
       });
     },
   };
