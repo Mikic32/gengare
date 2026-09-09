@@ -1,0 +1,34 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="expo.modules.smsqueue" >
+4
+5    <uses-sdk android:minSdkVersion="24" />
+6
+7    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+7-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:2:3-68
+7-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:2:20-65
+8    <uses-permission android:name="android.permission.READ_SMS" />
+8-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:3:3-65
+8-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:3:20-62
+9
+10    <application>
+10-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:5:3-14:17
+11        <receiver
+11-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:6:5-13:16
+12            android:name="expo.modules.smsqueue.BankSmsReceiver"
+12-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:7:7-59
+13            android:exported="true"
+13-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:8:7-30
+14            android:permission="android.permission.BROADCAST_SMS" >
+14-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:9:7-60
+15            <intent-filter android:priority="999" >
+15-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:10:7-12:23
+15-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:10:22-44
+16                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+16-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:11:9-74
+16-->/home/mikic/Projects/gengare/modules/sms-queue/android/src/main/AndroidManifest.xml:11:17-71
+17            </intent-filter>
+18        </receiver>
+19    </application>
+20
+21</manifest>
