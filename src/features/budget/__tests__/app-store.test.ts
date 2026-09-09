@@ -10,6 +10,7 @@ import type {
   IgnoreImportedTransactionInput,
   ImportOutcome,
   ManualTransactionInput,
+  MonthlyReport,
   UpdateManualTransactionInput,
 } from '../types';
 
@@ -30,6 +31,24 @@ describe('budget app store', () => {
     expect(store.getTransactions).toHaveBeenCalledTimes(1);
     expect(store.getInboxTransactions).not.toHaveBeenCalled();
     expect(store.getImportOutcomes).not.toHaveBeenCalled();
+  });
+
+  it('loads reports screen data for a chosen month through one app-facing Module call', async () => {
+    const store = createBudgetStoreStub();
+    const appStore = createBudgetAppStore(store);
+
+    const screenData = await appStore.loadReportsScreenData(
+      '2026-07',
+      new Date('2026-07-07T10:00:00.000Z')
+    );
+
+    expect(screenData).toEqual({
+      budgetView: TEST_BUDGET_VIEW,
+      report: TEST_MONTHLY_REPORT,
+    });
+    expect(store.getCurrentBudgetView).toHaveBeenCalledTimes(1);
+    expect(store.getMonthlyReport).toHaveBeenCalledWith('2026-07');
+    expect(store.getTransactions).not.toHaveBeenCalled();
   });
 
   it('rehydrates transaction screen data after saving a manual transaction', async () => {
@@ -170,6 +189,22 @@ const TEST_BUDGET_VIEW: BudgetView = {
   ],
 };
 
+const TEST_MONTHLY_REPORT: MonthlyReport = {
+  monthKey: '2026-07',
+  spendingByCategory: [
+    {
+      categoryId: 'category-1',
+      categoryName: 'Groceries',
+      spentCents: 5_000,
+    },
+  ],
+  cashflow: {
+    inflowCents: 0,
+    outflowCents: 5_000,
+    netCents: -5_000,
+  },
+};
+
 const TEST_TRANSACTIONS: CanonicalTransaction[] = [
   {
     id: 'transaction-1',
@@ -300,6 +335,9 @@ function createBudgetStoreStub(): BudgetStore {
   return {
     getCurrentBudgetView: vi.fn<(now?: Date) => Promise<BudgetView | null>>(
       async () => TEST_BUDGET_VIEW
+    ),
+    getMonthlyReport: vi.fn<(monthKey: string) => Promise<MonthlyReport | null>>(
+      async () => TEST_MONTHLY_REPORT
     ),
     getTransactions: vi.fn<() => Promise<CanonicalTransaction[]>>(async () => TEST_TRANSACTIONS),
     getInboxTransactions: vi.fn<() => Promise<CanonicalTransaction[]>>(

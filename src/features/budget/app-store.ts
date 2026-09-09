@@ -7,6 +7,7 @@ export type {
   BudgetAppStore,
   InboxScreenData,
   ManualImportTask,
+  ReportsScreenData,
   TransactionsScreenData,
 } from './app-module';
 

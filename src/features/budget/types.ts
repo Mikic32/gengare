@@ -208,3 +208,21 @@ export type BudgetView = {
   moneyState: BudgetMoneyState;
   categoryGroups: BudgetCategoryGroupView[];
 };
+
+export type MonthlyCategorySpending = {
+  categoryId: string;
+  categoryName: string;
+  spentCents: number;
+};
+
+export type MonthlyCashflow = {
+  inflowCents: number;
+  outflowCents: number;
+  netCents: number;
+};
+
+export type MonthlyReport = {
+  monthKey: string;
+  spendingByCategory: MonthlyCategorySpending[];
+  cashflow: MonthlyCashflow;
+};

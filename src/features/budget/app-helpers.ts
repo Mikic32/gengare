@@ -1,4 +1,4 @@
-import { toLocalDateKey } from './budget-engine';
+import { toLocalDateKey, toMonthKey } from './budget-engine';
 import { parseDecimalMoneyToCents } from './money';
 import type { CanonicalTransaction, ImportOutcome, TransactionSource } from './types';
 
@@ -81,18 +81,36 @@ export function formatImportOutcomeReason(reason: ImportOutcome['reason']) {
 }
 
 export function formatMonthLabel(monthKey: string) {
+  const parts = parseMonthKey(monthKey);
+  if (!parts) {
+    return monthKey;
+  }
+
+  return new Date(parts.year, parts.month - 1, 1).toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+export function shiftMonthKey(monthKey: string, offset: number) {
+  const parts = parseMonthKey(monthKey) ?? { year: 1970, month: 1 };
+  return toMonthKey(new Date(parts.year, parts.month - 1 + offset, 1));
+}
+
+export function currentMonthKey(now: Date = new Date()) {
+  return toMonthKey(now);
+}
+
+function parseMonthKey(monthKey: string) {
   const [yearText, monthText] = monthKey.split('-');
   const year = Number(yearText);
   const month = Number(monthText);
 
   if (!year || !month) {
-    return monthKey;
+    return null;
   }
 
-  return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
-    month: 'long',
-    year: 'numeric',
-  });
+  return { year, month };
 }
 
 export function getLocalDateKey(value: Date = new Date()) {

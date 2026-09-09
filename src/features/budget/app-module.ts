@@ -14,6 +14,7 @@ import type {
   IgnoreUnparseableSmsInput,
   ImportOutcome,
   ManualTransactionInput,
+  MonthlyReport,
   RawSmsMessage,
   RecoverUnparseableSmsInput,
   SmsParseResult,
@@ -23,6 +24,11 @@ import type {
 export type TransactionsScreenData = {
   budgetView: BudgetView | null;
   transactions: CanonicalTransaction[];
+};
+
+export type ReportsScreenData = {
+  budgetView: BudgetView | null;
+  report: MonthlyReport | null;
 };
 
 export type ManualImportTask = {
@@ -47,6 +53,7 @@ export type BudgetAppStore = {
     now?: Date
   ): Promise<BudgetView>;
   loadTransactionsScreenData(now?: Date): Promise<TransactionsScreenData>;
+  loadReportsScreenData(monthKey: string, now?: Date): Promise<ReportsScreenData>;
   loadInboxScreenData(now?: Date): Promise<InboxScreenData>;
   saveManualTransaction(
     input: ManualTransactionInput | UpdateManualTransactionInput,
@@ -126,6 +133,18 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
       return {
         budgetView,
         transactions,
+      };
+    },
+
+    async loadReportsScreenData(monthKey: string, now = new Date()) {
+      const [budgetView, report] = await Promise.all([
+        store.getCurrentBudgetView(now),
+        store.getMonthlyReport(monthKey),
+      ]);
+
+      return {
+        budgetView,
+        report,
       };
     },
 
