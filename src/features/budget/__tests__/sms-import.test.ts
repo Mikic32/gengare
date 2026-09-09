@@ -24,6 +24,26 @@ describe('debug SMS parser', () => {
     expect(parsed?.occurredAt).toBe(new Date(2026, 5, 30, 3, 24, 4, 0).toISOString());
   });
 
+  it('parses a real OTP_Info outflow SMS with no thousands separator', () => {
+    const parsed = parseDebugBankSms(
+      [
+        'Datum: 09.09.2026, Vreme: 19:39:19',
+        'Tekuci racun: 93005***84',
+        'Odliv: 735,70 RSD',
+        'Raspoloziva sredstva: 95.832,59 RSD',
+        'Vasa OTP banka',
+      ].join('\n')
+    );
+
+    expect(parsed).toMatchObject({
+      kind: 'outflow',
+      amountCents: 73_570,
+      balanceAfterCents: 9_583_259,
+      payee: null,
+    });
+    expect(parsed?.occurredAt).toBe(new Date(2026, 8, 9, 19, 39, 19, 0).toISOString());
+  });
+
   it('parses OTP inflow SMS', () => {
     const parsed = parseDebugBankSms(
       [

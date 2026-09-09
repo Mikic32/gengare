@@ -1,7 +1,12 @@
 import { parseBackup, serializeBackup } from './backup';
 import { deriveBudgetView, toMonthKey } from './budget-engine';
 import { applyEnvelopeCommand } from './envelopes';
-import { DEBUG_BANK_ALLOWED_SENDERS, orchestrateSmsImport } from './import-orchestration';
+import {
+  collectUnimportedSms,
+  DEBUG_BANK_ALLOWED_SENDERS,
+  getTrackingCutover,
+  orchestrateSmsImport,
+} from './import-orchestration';
 import { applyCreateManualTransaction, applyUpdateManualTransaction } from './manual-transactions';
 import { createNoopNativeSmsQueue, type NativeSmsQueuePort } from './native-sms-queue';
 import { applyCompleteOnboarding } from './onboarding';
@@ -412,7 +417,12 @@ export function createBudgetStore(
           return [];
         }
 
-        const payloads = await smsQueue.drain();
+        const cutover = getTrackingCutover(snapshot);
+        const payloads = collectUnimportedSms({
+          queued: await smsQueue.drain(),
+          scanned: cutover ? await smsQueue.scanInbox(cutover) : [],
+          existing: snapshot.rawSmsMessages,
+        });
         const importResults: DebugSmsImportResult[] = [];
 
         for (const payload of payloads) {

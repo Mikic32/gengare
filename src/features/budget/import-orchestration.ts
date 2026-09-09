@@ -11,7 +11,7 @@ import type {
   SmsParseResult,
 } from './types';
 
-export const DEBUG_BANK_ALLOWED_SENDERS = ['BANK'] as const;
+export const DEBUG_BANK_ALLOWED_SENDERS = ['OTP_Info', 'BANK'] as const;
 
 export function isAllowedSender(
   sender: string,
@@ -228,11 +228,36 @@ function isBeforeTrackingCutover(snapshot: BudgetSnapshot, occurredAt: string) {
   return occurredAt.localeCompare(cutover) < 0;
 }
 
-function getTrackingCutover(snapshot: BudgetSnapshot) {
+export function getTrackingCutover(snapshot: BudgetSnapshot) {
   const startingBalance = snapshot.transactions.find(
     (transaction) => transaction.source === 'starting_balance'
   );
   return startingBalance?.occurredAt ?? snapshot.account?.createdAt ?? '';
+}
+
+export function inboundSmsFingerprint(sms: { sender: string; body: string; receivedAt: string }) {
+  return `${sms.sender.trim().toUpperCase()}\0${sms.body.trim()}\0${normalizeOccurredAt(sms.receivedAt)}`;
+}
+
+export function collectUnimportedSms(input: {
+  queued: readonly InboundSmsInput[];
+  scanned: readonly InboundSmsInput[];
+  existing: readonly Pick<RawSmsMessage, 'sender' | 'body' | 'receivedAt'>[];
+}): InboundSmsInput[] {
+  const seen = new Set(input.existing.map(inboundSmsFingerprint));
+  const collected: InboundSmsInput[] = [];
+
+  for (const payload of [...input.queued, ...input.scanned]) {
+    const fingerprint = inboundSmsFingerprint(payload);
+    if (seen.has(fingerprint)) {
+      continue;
+    }
+
+    seen.add(fingerprint);
+    collected.push(payload);
+  }
+
+  return collected;
 }
 
 export function hasPossibleDuplicate(

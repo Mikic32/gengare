@@ -549,6 +549,54 @@ describe('budget store bootstrap', () => {
     expect(await smsQueue.drain()).toEqual([payload]);
   });
 
+  it('imports a missed OTP_Info SMS from the device inbox when the native queue is empty', async () => {
+    const smsQueue = createMemoryNativeSmsQueue();
+    smsQueue.seedInbox({
+      sender: 'OTP_Info',
+      body: [
+        'Datum: 09.09.2026, Vreme: 19:39:19',
+        'Tekuci racun: 93005***84',
+        'Odliv: 735,70 RSD',
+        'Raspoloziva sredstva: 95.832,59 RSD',
+        'Vasa OTP banka',
+      ].join('\n'),
+      receivedAt: '2026-09-09T17:39:19.000Z',
+    });
+
+    const store = createBudgetStore(createMemoryBudgetStorage(), smsQueue);
+
+    await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-09-08T10:00:00.000Z')
+    );
+
+    const importResults = await store.importQueuedSms(new Date('2026-09-09T17:40:00.000Z'));
+
+    expect(importResults).toHaveLength(1);
+    expect(importResults[0].importOutcome).toMatchObject({
+      kind: 'needs_review',
+      reason: 'parsed_ok',
+    });
+    expect(importResults[0].transaction).toMatchObject({
+      source: 'sms',
+      status: 'needs_review',
+      amountCents: -73_570,
+      balanceAfterCents: 9_583_259,
+    });
+
+    expect(await store.importQueuedSms(new Date('2026-09-09T17:41:00.000Z'))).toEqual([]);
+  });
+
   it('imports the in-app sample SMS as a review candidate after current onboarding', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
     const onboardedAt = new Date('2026-08-26T14:00:00.000Z');

@@ -65,4 +65,27 @@ describe('native SMS queue', () => {
     expect(await queue.drain()).toEqual([first, second]);
     expect(await queue.drain()).toEqual([]);
   });
+
+  it('scans allowlisted inbox messages received after the cutover', async () => {
+    const queue = createMemoryNativeSmsQueue();
+    const kept = {
+      sender: 'OTP_Info',
+      body: 'Odliv: 735,70 RSD',
+      receivedAt: '2026-09-09T17:39:19.000Z',
+    };
+
+    queue.seedInbox({
+      sender: 'OTP_Info',
+      body: 'old',
+      receivedAt: '2026-09-08T10:00:00.000Z',
+    });
+    queue.seedInbox({
+      sender: 'SPAMMER',
+      body: 'noise',
+      receivedAt: '2026-09-09T17:39:19.000Z',
+    });
+    queue.seedInbox(kept);
+
+    expect(await queue.scanInbox('2026-09-09T00:00:00.000Z')).toEqual([kept]);
+  });
 });

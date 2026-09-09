@@ -1,14 +1,22 @@
 package expo.modules.smsqueue
 
 import android.content.Context
+import android.provider.Telephony
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 object SmsInbox {
   private const val PREFS_NAME = "gengare_sms_inbox"
   private const val QUEUE_KEY = "queued_sms"
   private const val ALLOWLIST_KEY = "allowed_senders"
-  private val DEFAULT_ALLOWLIST = listOf("BANK")
+  private val DEFAULT_ALLOWLIST = listOf("OTP_Info", "BANK")
+  private val RECEIVED_AT_FORMAT = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+    timeZone = TimeZone.getTimeZone("UTC")
+  }
 
   fun receive(context: Context, payload: QueuedSms): Boolean {
     if (!isAllowedSender(payload.sender, getAllowedSenders(context))) {
@@ -29,6 +37,50 @@ object SmsInbox {
       val queue = readQueue(context)
       writeQueue(context, emptyList())
       return queue
+    }
+  }
+
+  fun scanInbox(context: Context, sinceReceivedAt: String): List<QueuedSms> {
+    val sinceMillis = parseReceivedAt(sinceReceivedAt) ?: return emptyList()
+    val allowedSenders = getAllowedSenders(context)
+
+    return try {
+      context.contentResolver.query(
+        Telephony.Sms.Inbox.CONTENT_URI,
+        arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
+        "${Telephony.Sms.DATE} >= ?",
+        arrayOf(sinceMillis.toString()),
+        "${Telephony.Sms.DATE} ASC"
+      )?.use { cursor ->
+        val addressIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
+        val bodyIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)
+        val dateIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)
+        buildList {
+          while (cursor.moveToNext()) {
+            val sender = cursor.getString(addressIndex)?.trim().orEmpty()
+            val body = cursor.getString(bodyIndex)?.trim().orEmpty()
+            if (sender.isEmpty() || body.isEmpty() || !isAllowedSender(sender, allowedSenders)) {
+              continue
+            }
+
+            add(
+              QueuedSms(
+                sender = sender,
+                body = body,
+                receivedAt = formatReceivedAt(cursor.getLong(dateIndex))
+              )
+            )
+          }
+        }
+      } ?: emptyList()
+    } catch (_: SecurityException) {
+      emptyList()
+    }
+  }
+
+  fun formatReceivedAt(timestampMillis: Long): String {
+    synchronized(RECEIVED_AT_FORMAT) {
+      return RECEIVED_AT_FORMAT.format(Date(timestampMillis))
     }
   }
 
@@ -87,6 +139,16 @@ object SmsInbox {
     }
 
     prefs(context).edit().putString(QUEUE_KEY, array.toString()).commit()
+  }
+
+  private fun parseReceivedAt(value: String): Long? {
+    return try {
+      synchronized(RECEIVED_AT_FORMAT) {
+        RECEIVED_AT_FORMAT.parse(value)?.time
+      }
+    } catch (_: Exception) {
+      null
+    }
   }
 
   private fun prefs(context: Context) =

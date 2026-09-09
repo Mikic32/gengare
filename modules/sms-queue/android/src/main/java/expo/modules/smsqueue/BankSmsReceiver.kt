@@ -4,10 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
 
 class BankSmsReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
@@ -34,14 +30,8 @@ class BankSmsReceiver : BroadcastReceiver() {
       QueuedSms(
         sender = sender,
         body = body,
-        receivedAt = formatReceivedAt(messages.first().timestampMillis)
+        receivedAt = SmsInbox.formatReceivedAt(messages.first().timestampMillis)
       )
     )
-  }
-
-  private fun formatReceivedAt(timestampMillis: Long): String {
-    val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
-    formatter.timeZone = TimeZone.getTimeZone("UTC")
-    return formatter.format(Date(timestampMillis))
   }
 }

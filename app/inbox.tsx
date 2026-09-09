@@ -53,7 +53,7 @@ type RecoveryDraft = {
 export default function InboxScreen() {
   const { refreshInboxCount } = useAppShell();
   const [screenData, setScreenData] = React.useState<InboxScreenData | null>(null);
-  const [debugSmsSender, setDebugSmsSender] = React.useState('BANK');
+  const [debugSmsSender, setDebugSmsSender] = React.useState('OTP_Info');
   const [debugSmsBody, setDebugSmsBody] = React.useState(createSampleDebugSmsBody);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isImportingSms, setIsImportingSms] = React.useState(false);

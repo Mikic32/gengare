@@ -19,6 +19,17 @@ class SmsQueueModule : Module() {
       }
     }
 
+    AsyncFunction("scanInbox") { sinceReceivedAt: String ->
+      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      SmsInbox.scanInbox(context, sinceReceivedAt).map { payload ->
+        mapOf(
+          "sender" to payload.sender,
+          "body" to payload.body,
+          "receivedAt" to payload.receivedAt
+        )
+      }
+    }
+
     AsyncFunction("setAllowedSenders") { senders: List<String> ->
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
       SmsInbox.setAllowedSenders(context, senders)

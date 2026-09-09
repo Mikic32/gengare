@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { orchestrateSmsImport } from '../import-orchestration';
+import { collectUnimportedSms, orchestrateSmsImport } from '../import-orchestration';
 import type { BudgetSnapshot } from '../types';
 
 describe('import orchestration', () => {
@@ -39,6 +39,55 @@ describe('import orchestration', () => {
       candidateTransactionId: 'transaction-2',
       reason: 'parsed_ok',
     });
+  });
+
+  it('accepts the real OTP_Info sender', () => {
+    const result = orchestrateSmsImport({
+      snapshot: createBudgetSnapshot(),
+      sms: {
+        sender: 'OTP_Info',
+        body: createOtpOutflowSms(),
+        receivedAt: '2026-06-25T10:31:00.000Z',
+      },
+      createdAt: '2026-06-25T10:31:00.000Z',
+      ids: createIds(),
+    });
+
+    expect(result.importOutcome).toMatchObject({
+      kind: 'needs_review',
+      reason: 'parsed_ok',
+    });
+  });
+
+  it('skips SMS that were already imported or already queued', () => {
+    const queued = {
+      sender: 'OTP_Info',
+      body: createOtpOutflowSms(),
+      receivedAt: '2026-09-09T17:39:19.000Z',
+    };
+    const scannedDuplicate = {
+      sender: 'otp_info',
+      body: `${createOtpOutflowSms()}\n`,
+      receivedAt: '2026-09-09T17:39:19.000Z',
+    };
+    const scannedNew = {
+      sender: 'OTP_Info',
+      body: createOtpOutflowSms().replace('1.568,80', '735,70'),
+      receivedAt: '2026-09-09T17:40:00.000Z',
+    };
+    const alreadyImported = {
+      sender: 'OTP_Info',
+      body: 'already stored',
+      receivedAt: '2026-09-09T17:38:00.000Z',
+    };
+
+    expect(
+      collectUnimportedSms({
+        queued: [queued],
+        scanned: [scannedDuplicate, scannedNew, alreadyImported],
+        existing: [alreadyImported],
+      })
+    ).toEqual([queued, scannedNew]);
   });
 
   it('ignores SMS from disallowed senders before parsing', () => {
