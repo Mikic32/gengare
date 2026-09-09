@@ -3,6 +3,7 @@ import { orchestrateSmsImport } from './import-orchestration';
 import { applyCreateManualTransaction, applyUpdateManualTransaction } from './manual-transactions';
 import { applyCompleteOnboarding } from './onboarding';
 import { applyCreateReconciliationAdjustment } from './reconciliation';
+import { deriveMonthlyReport } from './reports';
 import { applyTransactionWorkflow } from './transaction-workflow';
 import type {
   ApproveImportedTransactionInput,
@@ -15,6 +16,7 @@ import type {
   IgnoreUnparseableSmsInput,
   ImportOutcome,
   ManualTransactionInput,
+  MonthlyReport,
   RawSmsMessage,
   RecoverUnparseableSmsInput,
   SmsParseResult,
@@ -70,6 +72,7 @@ export type DebugSmsImportResult = {
 
 export type BudgetStore = {
   getCurrentBudgetView(now?: Date): Promise<BudgetView | null>;
+  getMonthlyReport(monthKey: string): Promise<MonthlyReport | null>;
   getTransactions(): Promise<BudgetSnapshot['transactions']>;
   getInboxTransactions(): Promise<BudgetSnapshot['transactions']>;
   getRawSmsMessages(): Promise<BudgetSnapshot['rawSmsMessages']>;
@@ -131,6 +134,17 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
       }
 
       return deriveBudgetView(snapshot, now);
+    },
+
+    async getMonthlyReport(monthKey: string) {
+      await waitForPendingMutations();
+      const snapshot = await storage.readSnapshot();
+
+      if (!snapshot.account) {
+        return null;
+      }
+
+      return deriveMonthlyReport(snapshot, monthKey);
     },
 
     async getTransactions() {
