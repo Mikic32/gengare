@@ -76,6 +76,10 @@ export type RestoreBackupConfirmation = {
   confirmed: boolean;
 };
 
+export type ResetLocalDataConfirmation = {
+  confirmed: boolean;
+};
+
 export type BudgetStore = {
   getCurrentBudgetView(now?: Date): Promise<BudgetView | null>;
   getMonthlyReport(monthKey: string): Promise<MonthlyReport | null>;
@@ -107,6 +111,7 @@ export type BudgetStore = {
     confirmation: RestoreBackupConfirmation,
     now?: Date
   ): Promise<BudgetView | null>;
+  resetLocalData(confirmation: ResetLocalDataConfirmation): Promise<void>;
   importQueuedSms(now?: Date): Promise<DebugSmsImportResult[]>;
 };
 
@@ -427,6 +432,17 @@ export function createBudgetStore(
         }
 
         return deriveBudgetView(snapshot, now);
+      });
+    },
+
+    async resetLocalData(confirmation) {
+      return runSerializedMutation(async () => {
+        if (confirmation.confirmed !== true) {
+          throw new Error('Reset requires explicit confirmation.');
+        }
+
+        await storage.replaceSnapshot(EMPTY_SNAPSHOT);
+        await smsQueue.drain();
       });
     },
   };

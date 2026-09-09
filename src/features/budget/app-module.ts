@@ -6,6 +6,7 @@ import type {
   DebugSmsImportInput,
   DebugSmsImportResult,
   MoveMoneyBetweenCategoriesInput,
+  ResetLocalDataConfirmation,
   RestoreBackupConfirmation,
 } from './store';
 import type {
@@ -86,6 +87,7 @@ export type BudgetAppStore = {
     confirmation: RestoreBackupConfirmation,
     now?: Date
   ): Promise<BudgetView | null>;
+  resetLocalData(confirmation: ResetLocalDataConfirmation): Promise<void>;
   drainQueuedSms(now?: Date): Promise<InboxScreenData>;
 };
 
@@ -248,6 +250,11 @@ export function createBudgetAppStore(
       const budgetView = await store.restoreBackup(serialized, confirmation, now);
       await syncActionableNotifications(budgetView);
       return budgetView;
+    },
+
+    async resetLocalData(confirmation) {
+      await store.resetLocalData(confirmation);
+      await syncActionableNotifications(null);
     },
 
     async drainQueuedSms(now = new Date()) {
