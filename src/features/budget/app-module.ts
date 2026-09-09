@@ -4,6 +4,7 @@ import type {
   DebugSmsImportInput,
   DebugSmsImportResult,
   MoveMoneyBetweenCategoriesInput,
+  RestoreBackupConfirmation,
 } from './store';
 import type {
   ApproveImportedTransactionInput,
@@ -69,6 +70,12 @@ export type BudgetAppStore = {
   ): Promise<InboxScreenData>;
   recoverUnparseableSms(input: RecoverUnparseableSmsInput, now?: Date): Promise<InboxScreenData>;
   ignoreUnparseableSms(input: IgnoreUnparseableSmsInput, now?: Date): Promise<InboxScreenData>;
+  exportBackup(now?: Date): Promise<string>;
+  restoreBackup(
+    serialized: string,
+    confirmation: RestoreBackupConfirmation,
+    now?: Date
+  ): Promise<BudgetView | null>;
 };
 
 export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
@@ -170,6 +177,14 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
     async ignoreUnparseableSms(input, now = new Date()) {
       const budgetView = await store.ignoreUnparseableSms(input, now);
       return hydrateInboxScreenData(budgetView);
+    },
+
+    exportBackup(now = new Date()) {
+      return store.exportBackup(now);
+    },
+
+    restoreBackup(serialized, confirmation, now = new Date()) {
+      return store.restoreBackup(serialized, confirmation, now);
     },
   };
 }

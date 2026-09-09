@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBudgetAppStore } from '../app-module';
-import type { BudgetStore, DebugSmsImportInput, DebugSmsImportResult } from '../store';
+import type {
+  BudgetStore,
+  DebugSmsImportInput,
+  DebugSmsImportResult,
+  RestoreBackupConfirmation,
+} from '../store';
 import type {
   ApproveImportedTransactionInput,
   BudgetView,
@@ -275,6 +280,8 @@ const TEST_MANUAL_IMPORT_OUTCOME: ImportOutcome = {
   createdAt: '2026-07-07T11:10:00.000Z',
 };
 
+const TEST_BACKUP = '{"format":"gengare-backup","version":1}';
+
 const TEST_IMPORT_RESULT: DebugSmsImportResult = {
   budgetView: TEST_BUDGET_VIEW,
   parseResult: {
@@ -330,5 +337,13 @@ function createBudgetStoreStub(): BudgetStore {
     importDebugSms: vi.fn<
       (input: DebugSmsImportInput, now?: Date) => Promise<DebugSmsImportResult>
     >(async () => TEST_IMPORT_RESULT),
+    exportBackup: vi.fn<(now?: Date) => Promise<string>>(async () => TEST_BACKUP),
+    restoreBackup: vi.fn<
+      (
+        serialized: string,
+        confirmation: RestoreBackupConfirmation,
+        now?: Date
+      ) => Promise<BudgetView | null>
+    >(async () => TEST_BUDGET_VIEW),
   };
 }

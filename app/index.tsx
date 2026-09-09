@@ -17,6 +17,7 @@ import {
 } from '@/src/features/budget/app-helpers';
 import { useAppShell } from '@/src/features/budget/app-shell';
 import { budgetAppStore } from '@/src/features/budget/app-store';
+import { BackupActions } from '@/src/features/budget/backup-actions';
 import { DEFAULT_CATEGORY_GROUPS } from '@/src/features/budget/defaults';
 import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
 import type {
@@ -314,6 +315,19 @@ export default function Screen() {
           <Button onPress={() => void handleCreateBudget()} disabled={isSubmitting}>
             <Text>{isSubmitting ? 'Creating budget…' : 'Start budgeting'}</Text>
           </Button>
+
+          <View className="gap-2">
+            <Text className="text-sm text-muted-foreground">Already have a backup?</Text>
+            <BackupActions
+              showExport={false}
+              restoreLabel="Restore from backup"
+              onRestored={async (view) => {
+                setBudgetView(view);
+                setOnboarded(view !== null);
+                await refreshInboxCount();
+              }}
+            />
+          </View>
         </ScreenScroll>
       )}
     </SafeAreaView>

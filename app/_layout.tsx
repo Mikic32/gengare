@@ -6,7 +6,7 @@ import { ThemeProvider } from '@react-navigation/native';
 import { PortalHost } from '@rn-primitives/portal';
 import { Tabs } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Inbox, List, Wallet } from 'lucide-react-native';
+import { Inbox, List, Settings, Wallet } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 
 export {
@@ -67,6 +67,13 @@ function AppTabs() {
         options={{
           title: 'Activity',
           tabBarIcon: ({ color, size }) => <List color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          tabBarIcon: ({ color, size }) => <Settings color={color} size={size} />,
         }}
       />
       <Tabs.Screen name="+not-found" options={{ href: null }} />
