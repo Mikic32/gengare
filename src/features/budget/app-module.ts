@@ -1,3 +1,5 @@
+import type { ActionableNotifications } from './actionable-notifications';
+import { countInboxItems } from './app-helpers';
 import type {
   AssignMoneyToCategoryInput,
   BudgetStore,
@@ -71,7 +73,12 @@ export type BudgetAppStore = {
   ignoreUnparseableSms(input: IgnoreUnparseableSmsInput, now?: Date): Promise<InboxScreenData>;
 };
 
-export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
+export function createBudgetAppStore(
+  store: BudgetStore,
+  options?: {
+    notifications?: ActionableNotifications;
+  }
+): BudgetAppStore {
   async function hydrateTransactionsScreenData(
     budgetView: BudgetView | null
   ): Promise<TransactionsScreenData> {
@@ -100,6 +107,29 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
     });
   }
 
+  function syncActionableNotificationsFromInbox(screenData: InboxScreenData) {
+    options?.notifications?.sync({
+      inboxItemCount: countInboxItems(screenData),
+      budgetView: screenData.budgetView,
+    });
+  }
+
+  async function syncActionableNotifications(budgetView: BudgetView | null) {
+    if (!options?.notifications) {
+      return;
+    }
+
+    const screenData = await hydrateInboxScreenData(budgetView);
+    syncActionableNotificationsFromInbox(screenData);
+  }
+
+  async function mutateInbox(run: () => Promise<BudgetView>): Promise<InboxScreenData> {
+    const budgetView = await run();
+    const screenData = await hydrateInboxScreenData(budgetView);
+    syncActionableNotificationsFromInbox(screenData);
+    return screenData;
+  }
+
   return {
     getBudgetView(now = new Date()) {
       return store.getCurrentBudgetView(now);
@@ -109,12 +139,16 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
       return store.completeOnboarding(input, now);
     },
 
-    assignMoneyToCategory(input, now = new Date()) {
-      return store.assignMoneyToCategory(input, now);
+    async assignMoneyToCategory(input, now = new Date()) {
+      const budgetView = await store.assignMoneyToCategory(input, now);
+      await syncActionableNotifications(budgetView);
+      return budgetView;
     },
 
-    moveMoneyBetweenCategories(input, now = new Date()) {
-      return store.moveMoneyBetweenCategories(input, now);
+    async moveMoneyBetweenCategories(input, now = new Date()) {
+      const budgetView = await store.moveMoneyBetweenCategories(input, now);
+      await syncActionableNotifications(budgetView);
+      return budgetView;
     },
 
     async loadTransactionsScreenData(now = new Date()) {
@@ -140,36 +174,36 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
           ? await store.updateManualTransaction(input, now)
           : await store.createManualTransaction(input, now);
 
-      return hydrateTransactionsScreenData(budgetView);
+      const screenData = await hydrateTransactionsScreenData(budgetView);
+      await syncActionableNotifications(budgetView);
+      return screenData;
     },
 
     async importDebugSms(input, now = new Date()) {
       const importResult = await store.importDebugSms(input, now);
+      const screenData = await hydrateInboxScreenData(importResult.budgetView);
+      syncActionableNotificationsFromInbox(screenData);
 
       return {
         importResult,
-        screenData: await hydrateInboxScreenData(importResult.budgetView),
+        screenData,
       };
     },
 
-    async approveImportedTransaction(input, now = new Date()) {
-      const budgetView = await store.approveImportedTransaction(input, now);
-      return hydrateInboxScreenData(budgetView);
+    approveImportedTransaction(input, now = new Date()) {
+      return mutateInbox(() => store.approveImportedTransaction(input, now));
     },
 
-    async ignoreImportedTransaction(input, now = new Date()) {
-      const budgetView = await store.ignoreImportedTransaction(input, now);
-      return hydrateInboxScreenData(budgetView);
+    ignoreImportedTransaction(input, now = new Date()) {
+      return mutateInbox(() => store.ignoreImportedTransaction(input, now));
     },
 
-    async recoverUnparseableSms(input, now = new Date()) {
-      const budgetView = await store.recoverUnparseableSms(input, now);
-      return hydrateInboxScreenData(budgetView);
+    recoverUnparseableSms(input, now = new Date()) {
+      return mutateInbox(() => store.recoverUnparseableSms(input, now));
     },
 
-    async ignoreUnparseableSms(input, now = new Date()) {
-      const budgetView = await store.ignoreUnparseableSms(input, now);
-      return hydrateInboxScreenData(budgetView);
+    ignoreUnparseableSms(input, now = new Date()) {
+      return mutateInbox(() => store.ignoreUnparseableSms(input, now));
     },
   };
 }

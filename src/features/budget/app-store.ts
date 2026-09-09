@@ -1,4 +1,6 @@
+import { createActionableNotifications } from './actionable-notifications';
 import { createBudgetAppStore } from './app-module';
+import { createAppNotificationPresenter } from './notification-gateway';
 import { createAppBudgetStorage } from './storage';
 import { createBudgetStore } from './store';
 
@@ -10,4 +12,8 @@ export type {
   TransactionsScreenData,
 } from './app-module';
 
-export const budgetAppStore = createBudgetAppStore(createBudgetStore(createAppBudgetStorage()));
+export const budgetAppStore = createBudgetAppStore(createBudgetStore(createAppBudgetStorage()), {
+  notifications: createActionableNotifications({
+    presenter: createAppNotificationPresenter(),
+  }),
+});

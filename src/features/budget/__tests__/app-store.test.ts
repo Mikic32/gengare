@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createActionableNotifications } from '../actionable-notifications';
 import { createBudgetAppStore } from '../app-module';
 import type { BudgetStore, DebugSmsImportInput, DebugSmsImportResult } from '../store';
 import type {
@@ -14,6 +15,10 @@ import type {
 } from '../types';
 
 describe('budget app store', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('loads transactions screen data through one app-facing Module call', async () => {
     const store = createBudgetStoreStub();
     const appStore = createBudgetAppStore(store);
@@ -137,20 +142,96 @@ describe('budget app store', () => {
     expect(screenData.possibleDuplicates).toEqual([]);
     expect(screenData.manualImportTasks).toEqual([]);
   });
+
+  it('derives a debounced notification summary from Inbox and budget after SMS import', async () => {
+    const presenter = createMemoryNotificationPresenter();
+    const notifications = createActionableNotifications({
+      presenter,
+      debounceMs: 1_000,
+    });
+    const store = createBudgetStoreStub();
+    const appStore = createBudgetAppStore(store, { notifications });
+
+    vi.useFakeTimers();
+    await appStore.importDebugSms(
+      {
+        sender: 'BANK',
+        body: 'Debug SMS',
+        receivedAt: '2026-07-07T12:00:00.000Z',
+      },
+      new Date('2026-07-07T12:00:00.000Z')
+    );
+
+    expect(presenter.presented).toEqual([]);
+
+    vi.advanceTimersByTime(1_000);
+
+    expect(presenter.presented).toEqual([
+      {
+        title: 'Budget needs attention',
+        body: '1 item to review · 450.00 RSD to assign',
+      },
+    ]);
+  });
+
+  it('does not emit one notification per imported SMS when several arrive in a burst', async () => {
+    const presenter = createMemoryNotificationPresenter();
+    const notifications = createActionableNotifications({
+      presenter,
+      debounceMs: 1_000,
+    });
+    const inbox: CanonicalTransaction[] = [];
+    const store = createBudgetStoreStub();
+    store.getInboxTransactions = vi.fn(async () => [...inbox]);
+    store.importDebugSms = vi.fn(async () => {
+      inbox.push({
+        ...TEST_INBOX_TRANSACTIONS[0],
+        id: `transaction-inbox-${inbox.length + 1}`,
+      });
+      return TEST_IMPORT_RESULT;
+    });
+    const appStore = createBudgetAppStore(store, { notifications });
+
+    vi.useFakeTimers();
+    await appStore.importDebugSms(
+      {
+        sender: 'BANK',
+        body: 'First SMS',
+        receivedAt: '2026-07-07T12:00:00.000Z',
+      },
+      new Date('2026-07-07T12:00:00.000Z')
+    );
+    await appStore.importDebugSms(
+      {
+        sender: 'BANK',
+        body: 'Second SMS',
+        receivedAt: '2026-07-07T12:00:01.000Z',
+      },
+      new Date('2026-07-07T12:00:01.000Z')
+    );
+    vi.advanceTimersByTime(1_000);
+
+    expect(presenter.presented).toEqual([
+      {
+        title: 'Budget needs attention',
+        body: '2 items to review · 450.00 RSD to assign',
+      },
+    ]);
+  });
 });
 
-const TEST_BUDGET_VIEW: BudgetView = {
+const TEST_BUDGET_VIEW = {
   accountName: 'Main account',
   currencyCode: 'RSD',
   monthKey: '2026-07',
   moneyState: {
     accountBalance: {
       amountCents: 120_000,
-      derivedFrom: 'latest_non_ignored_balance_evidence',
+      derivedFrom: 'latest_non_ignored_balance_evidence' as const,
     },
     assignableCash: {
       amountCents: 45_000,
-      derivedFrom: 'approved_categoryless_inflows_minus_assignments_and_overspending',
+      derivedFrom: 'approved_categoryless_inflows_minus_assignments_and_overspending' as const,
     },
   },
   categoryGroups: [
@@ -168,7 +249,7 @@ const TEST_BUDGET_VIEW: BudgetView = {
       ],
     },
   ],
-};
+} as unknown as BudgetView;
 
 const TEST_TRANSACTIONS: CanonicalTransaction[] = [
   {
@@ -296,6 +377,18 @@ const TEST_IMPORT_RESULT: DebugSmsImportResult = {
   importOutcome: TEST_IMPORT_OUTCOMES[0],
 };
 
+function createMemoryNotificationPresenter() {
+  const presented: { title: string; body: string }[] = [];
+
+  return {
+    presented,
+    present(notification: { title: string; body: string }) {
+      presented.push(notification);
+    },
+    clear() {},
+  };
+}
+
 function createBudgetStoreStub(): BudgetStore {
   return {
     getCurrentBudgetView: vi.fn<(now?: Date) => Promise<BudgetView | null>>(
@@ -330,5 +423,5 @@ function createBudgetStoreStub(): BudgetStore {
     importDebugSms: vi.fn<
       (input: DebugSmsImportInput, now?: Date) => Promise<DebugSmsImportResult>
     >(async () => TEST_IMPORT_RESULT),
-  };
+  } as unknown as BudgetStore;
 }
