@@ -1,6 +1,13 @@
 import { DarkTheme, DefaultTheme, type Theme } from '@react-navigation/native';
 import { useColorScheme } from 'nativewind';
 
+export {
+  COLOR_SCHEME_STORAGE_KEY,
+  readStoredColorScheme,
+  storeColorScheme,
+  type AppColorScheme,
+} from '@/lib/color-scheme-storage';
+
 // Icon / splash green: #1A3B28
 export const THEME = {
   light: {

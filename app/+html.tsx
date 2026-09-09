@@ -1,3 +1,4 @@
+import { COLOR_SCHEME_STORAGE_KEY } from '@/lib/color-scheme-storage';
 import { ScrollViewStyleReset } from 'expo-router/html';
 import { type PropsWithChildren } from 'react';
 
@@ -19,7 +20,11 @@ export default function Root({ children }: PropsWithChildren) {
         */}
         <ScrollViewStyleReset />
 
-        {/* Add any additional <head> elements that you want globally available on web... */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem(${JSON.stringify(COLOR_SCHEME_STORAGE_KEY)})==='dark')document.documentElement.classList.add('dark')}catch(e){}`,
+          }}
+        />
       </head>
       <body>{children}</body>
     </html>

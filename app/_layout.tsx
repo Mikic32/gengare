@@ -1,6 +1,6 @@
 import '@/global.css';
 
-import { NAV_THEME, usePalette } from '@/lib/theme';
+import { NAV_THEME, readStoredColorScheme, usePalette } from '@/lib/theme';
 import { AppShellProvider, useAppShell } from '@/src/features/budget/app-shell';
 import { ThemeProvider } from '@react-navigation/native';
 import { PortalHost } from '@rn-primitives/portal';
@@ -8,6 +8,7 @@ import { Tabs } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ChartColumn, Inbox, List, Settings, Wallet } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
+import * as React from 'react';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -15,7 +16,14 @@ export {
 } from 'expo-router';
 
 export default function RootLayout() {
-  const { colorScheme } = useColorScheme();
+  const { colorScheme, setColorScheme } = useColorScheme();
+
+  React.useEffect(() => {
+    const stored = readStoredColorScheme();
+    if (stored) {
+      setColorScheme(stored);
+    }
+  }, [setColorScheme]);
 
   return (
     <ThemeProvider value={NAV_THEME[colorScheme ?? 'light']}>
