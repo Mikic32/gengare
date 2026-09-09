@@ -1,8 +1,4 @@
-import type {
-  BudgetSnapshot,
-  ManualTransactionInput,
-  UpdateManualTransactionInput,
-} from './types';
+import type { BudgetSnapshot, ManualTransactionInput, UpdateManualTransactionInput } from './types';
 
 export function applyCreateManualTransaction(
   snapshot: BudgetSnapshot,
@@ -117,9 +113,9 @@ function assertBudgetExists(
 }
 
 function assertCategoryExists(snapshot: BudgetSnapshot, categoryId: string) {
-  const categoryExists = snapshot.categories.some((category) => category.id === categoryId);
+  const category = snapshot.categories.find((entry) => entry.id === categoryId);
 
-  if (!categoryExists) {
+  if (!category || category.archivedAt != null) {
     throw new Error('Category does not exist.');
   }
 }

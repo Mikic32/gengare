@@ -130,9 +130,9 @@ function assertNoApprovedSmsDuplicate(
 }
 
 function assertCategoryExists(snapshot: BudgetSnapshot, categoryId: string) {
-  const categoryExists = snapshot.categories.some((category) => category.id === categoryId);
+  const category = snapshot.categories.find((entry) => entry.id === categoryId);
 
-  if (!categoryExists) {
+  if (!category || category.archivedAt != null) {
     throw new Error('Category does not exist.');
   }
 }

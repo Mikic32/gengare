@@ -12,6 +12,7 @@ export type CategoryGroup = {
   name: string;
   sortOrder: number;
   createdAt: string;
+  archivedAt?: string;
 };
 
 export type Category = {
@@ -20,6 +21,7 @@ export type Category = {
   name: string;
   sortOrder: number;
   createdAt: string;
+  archivedAt?: string;
 };
 
 export type TransactionSource = 'starting_balance' | 'manual' | 'sms' | 'reconciliation';
@@ -151,6 +153,36 @@ export type RecoverUnparseableSmsInput = {
 export type IgnoreUnparseableSmsInput = {
   importOutcomeId: string;
 };
+
+export type EnvelopeCommand =
+  | {
+      kind: 'rename_category';
+      categoryId: string;
+      name: string;
+    }
+  | {
+      kind: 'rename_group';
+      groupId: string;
+      name: string;
+    }
+  | {
+      kind: 'create_category';
+      groupId: string;
+      name: string;
+    }
+  | {
+      kind: 'create_group';
+      name: string;
+      categoryName: string;
+    }
+  | {
+      kind: 'remove_category';
+      categoryId: string;
+    }
+  | {
+      kind: 'remove_group';
+      groupId: string;
+    };
 
 export type TransactionWorkflowCommand =
   | {

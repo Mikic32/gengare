@@ -14,6 +14,7 @@ import type {
   BudgetView,
   CanonicalTransaction,
   CompleteOnboardingInput,
+  EnvelopeCommand,
   IgnoreImportedTransactionInput,
   IgnoreUnparseableSmsInput,
   ImportOutcome,
@@ -51,6 +52,7 @@ export type InboxScreenData = {
 export type BudgetAppStore = {
   getBudgetView(now?: Date): Promise<BudgetView | null>;
   completeOnboarding(input: CompleteOnboardingInput, now?: Date): Promise<BudgetView>;
+  applyEnvelopeCommand(command: EnvelopeCommand, now?: Date): Promise<BudgetView>;
   assignMoneyToCategory(input: AssignMoneyToCategoryInput, now?: Date): Promise<BudgetView>;
   moveMoneyBetweenCategories(
     input: MoveMoneyBetweenCategoriesInput,
@@ -155,6 +157,12 @@ export function createBudgetAppStore(
 
     completeOnboarding(input, now = new Date()) {
       return store.completeOnboarding(input, now);
+    },
+
+    async applyEnvelopeCommand(command, now = new Date()) {
+      const budgetView = await store.applyEnvelopeCommand(command, now);
+      await syncActionableNotifications(budgetView);
+      return budgetView;
     },
 
     async assignMoneyToCategory(input, now = new Date()) {

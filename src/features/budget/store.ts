@@ -1,5 +1,6 @@
 import { parseBackup, serializeBackup } from './backup';
 import { deriveBudgetView, toMonthKey } from './budget-engine';
+import { applyEnvelopeCommand } from './envelopes';
 import { DEBUG_BANK_ALLOWED_SENDERS, orchestrateSmsImport } from './import-orchestration';
 import { applyCreateManualTransaction, applyUpdateManualTransaction } from './manual-transactions';
 import { createNoopNativeSmsQueue, type NativeSmsQueuePort } from './native-sms-queue';
@@ -14,6 +15,7 @@ import type {
   BudgetView,
   CanonicalTransaction,
   CompleteOnboardingInput,
+  EnvelopeCommand,
   IgnoreImportedTransactionInput,
   IgnoreUnparseableSmsInput,
   ImportOutcome,
@@ -89,6 +91,7 @@ export type BudgetStore = {
   getSmsParseResults(): Promise<BudgetSnapshot['smsParseResults']>;
   getImportOutcomes(): Promise<BudgetSnapshot['importOutcomes']>;
   completeOnboarding(input: CompleteOnboardingInput, now?: Date): Promise<BudgetView>;
+  applyEnvelopeCommand(command: EnvelopeCommand, now?: Date): Promise<BudgetView>;
   assignMoneyToCategory(input: AssignMoneyToCategoryInput, now?: Date): Promise<BudgetView>;
   moveMoneyBetweenCategories(
     input: MoveMoneyBetweenCategoriesInput,
@@ -239,6 +242,15 @@ export function createBudgetStore(
       return runSerializedMutation(async () => {
         const snapshot = await storage.readSnapshot();
         const nextSnapshot = applyCompleteOnboarding(snapshot, input, now);
+        await storage.replaceSnapshot(nextSnapshot);
+        return deriveBudgetView(nextSnapshot, now);
+      });
+    },
+
+    async applyEnvelopeCommand(command, now = new Date()) {
+      return runSerializedMutation(async () => {
+        const snapshot = await storage.readSnapshot();
+        const nextSnapshot = applyEnvelopeCommand(snapshot, command, now);
         await storage.replaceSnapshot(nextSnapshot);
         return deriveBudgetView(nextSnapshot, now);
       });
@@ -503,9 +515,9 @@ function assertWholeNumberOfCents(amountCents: number, label: string) {
 }
 
 function assertCategoryExists(snapshot: BudgetSnapshot, categoryId: string) {
-  const categoryExists = snapshot.categories.some((category) => category.id === categoryId);
+  const category = snapshot.categories.find((entry) => entry.id === categoryId);
 
-  if (!categoryExists) {
+  if (!category || category.archivedAt != null) {
     throw new Error('Category does not exist.');
   }
 }

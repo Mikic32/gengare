@@ -28,6 +28,7 @@ type CategoryGroupRow = {
   name: string;
   sort_order: number;
   created_at: string;
+  archived_at: string | null;
 };
 
 type CategoryRow = {
@@ -36,6 +37,7 @@ type CategoryRow = {
   name: string;
   sort_order: number;
   created_at: string;
+  archived_at: string | null;
 };
 
 type TransactionRow = {
@@ -111,10 +113,10 @@ function createSQLiteBudgetStorage(): BudgetStorage {
         'SELECT id, name, currency_code, created_at FROM accounts LIMIT 1'
       );
       const categoryGroupRows = await db.getAllAsync<CategoryGroupRow>(
-        'SELECT id, name, sort_order, created_at FROM category_groups ORDER BY sort_order ASC'
+        'SELECT id, name, sort_order, created_at, archived_at FROM category_groups ORDER BY sort_order ASC'
       );
       const categoryRows = await db.getAllAsync<CategoryRow>(
-        'SELECT id, group_id, name, sort_order, created_at FROM categories ORDER BY group_id ASC, sort_order ASC'
+        'SELECT id, group_id, name, sort_order, created_at, archived_at FROM categories ORDER BY group_id ASC, sort_order ASC'
       );
       const transactionRows = await db.getAllAsync<TransactionRow>(
         'SELECT id, account_id, source, kind, status, amount_cents, occurred_at, category_id, balance_after_cents, payee, memo, created_at FROM transactions ORDER BY occurred_at ASC, created_at ASC'
@@ -171,22 +173,24 @@ function createSQLiteBudgetStorage(): BudgetStorage {
 
         for (const group of snapshot.categoryGroups) {
           await db.runAsync(
-            'INSERT INTO category_groups (id, name, sort_order, created_at) VALUES (?, ?, ?, ?)',
+            'INSERT INTO category_groups (id, name, sort_order, created_at, archived_at) VALUES (?, ?, ?, ?, ?)',
             group.id,
             group.name,
             group.sortOrder,
-            group.createdAt
+            group.createdAt,
+            group.archivedAt ?? null
           );
         }
 
         for (const category of snapshot.categories) {
           await db.runAsync(
-            'INSERT INTO categories (id, group_id, name, sort_order, created_at) VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO categories (id, group_id, name, sort_order, created_at, archived_at) VALUES (?, ?, ?, ?, ?, ?)',
             category.id,
             category.groupId,
             category.name,
             category.sortOrder,
-            category.createdAt
+            category.createdAt,
+            category.archivedAt ?? null
           );
         }
 
@@ -367,7 +371,8 @@ async function ensureSchema(db: SQLiteDatabase) {
       id TEXT PRIMARY KEY NOT NULL,
       name TEXT NOT NULL,
       sort_order INTEGER NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      archived_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS categories (
@@ -376,6 +381,7 @@ async function ensureSchema(db: SQLiteDatabase) {
       name TEXT NOT NULL,
       sort_order INTEGER NOT NULL,
       created_at TEXT NOT NULL,
+      archived_at TEXT,
       FOREIGN KEY (group_id) REFERENCES category_groups (id) ON DELETE CASCADE
     );
 
@@ -444,6 +450,23 @@ async function ensureSchema(db: SQLiteDatabase) {
       FOREIGN KEY (candidate_transaction_id) REFERENCES transactions (id) ON DELETE SET NULL
     );
   `);
+
+  await addColumnIfMissing(db, 'category_groups', 'archived_at', 'TEXT');
+  await addColumnIfMissing(db, 'categories', 'archived_at', 'TEXT');
+}
+
+async function addColumnIfMissing(
+  db: SQLiteDatabase,
+  tableName: string,
+  columnName: string,
+  columnType: string
+) {
+  const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${tableName})`);
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+
+  await db.execAsync(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`);
 }
 
 function mapAccountRow(row: AccountRow): Account {
@@ -461,6 +484,7 @@ function mapCategoryGroupRow(row: CategoryGroupRow): CategoryGroup {
     name: row.name,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
+    ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
   };
 }
 
@@ -471,6 +495,7 @@ function mapCategoryRow(row: CategoryRow): Category {
     name: row.name,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
+    ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
   };
 }
 

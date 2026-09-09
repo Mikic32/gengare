@@ -19,11 +19,13 @@ import { useAppShell } from '@/src/features/budget/app-shell';
 import { budgetAppStore } from '@/src/features/budget/app-store';
 import { BackupActions } from '@/src/features/budget/backup-actions';
 import { DEFAULT_CATEGORY_GROUPS } from '@/src/features/budget/defaults';
+import { EnvelopeEditor } from '@/src/features/budget/envelope-editor';
 import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
 import type {
   BudgetCategoryView,
   BudgetView,
   CompleteOnboardingInput,
+  EnvelopeCommand,
 } from '@/src/features/budget/types';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
@@ -344,6 +346,7 @@ function BudgetScreen({
   const { inboxCount } = useAppShell();
   const [assignmentDrafts, setAssignmentDrafts] = React.useState<Record<string, string>>({});
   const [expandedCategoryId, setExpandedCategoryId] = React.useState<string | null>(null);
+  const [isEditingEnvelopes, setIsEditingEnvelopes] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [isUpdatingBudget, setIsUpdatingBudget] = React.useState(false);
 
@@ -436,6 +439,13 @@ function BudgetScreen({
     );
   }
 
+  async function handleEnvelopeCommand(command: EnvelopeCommand) {
+    await runBudgetUpdate(
+      () => budgetAppStore.applyEnvelopeCommand(command, new Date()),
+      'Could not update envelopes'
+    );
+  }
+
   const gapAmount = formatCurrency(Math.abs(reconciliationGapCents), budgetView.currencyCode);
 
   return (
@@ -512,50 +522,74 @@ function BudgetScreen({
         <View className="gap-1">
           <View className="flex-row items-center justify-between gap-3">
             <Text variant="large">Envelopes</Text>
-            <Text className="text-xs uppercase text-muted-foreground">Available</Text>
+            <Pressable
+              onPress={() => {
+                setIsEditingEnvelopes((current) => !current);
+                setExpandedCategoryId(null);
+              }}>
+              <Text className="text-sm text-muted-foreground">
+                {isEditingEnvelopes ? 'Done' : 'Edit'}
+              </Text>
+            </Pressable>
           </View>
-          {readyToAssignCents > 0 ? (
+          {isEditingEnvelopes ? (
+            <Text className="text-sm text-muted-foreground">
+              Rename, add, or remove envelopes. Leftover cash goes back to Ready to Assign.
+            </Text>
+          ) : readyToAssignCents > 0 ? (
             <Text className="text-sm text-muted-foreground">
               Tap an envelope to give this money a job.
             </Text>
           ) : null}
         </View>
 
-        {budgetView.categoryGroups.map((group) => (
-          <View key={group.id} className="overflow-hidden rounded-2xl border border-border bg-card">
-            <View className="border-b border-border px-5 py-3">
-              <Text className="font-semibold">{group.name}</Text>
+        {isEditingEnvelopes ? (
+          <EnvelopeEditor
+            budgetView={budgetView}
+            disabled={isUpdatingBudget}
+            onCommand={handleEnvelopeCommand}
+          />
+        ) : (
+          budgetView.categoryGroups.map((group) => (
+            <View
+              key={group.id}
+              className="overflow-hidden rounded-2xl border border-border bg-card">
+              <View className="border-b border-border px-5 py-3">
+                <Text className="font-semibold">{group.name}</Text>
+              </View>
+              {group.categories.map((category, categoryIndex) => (
+                <CategoryRow
+                  key={category.id}
+                  category={category}
+                  currencyCode={budgetView.currencyCode}
+                  isExpanded={expandedCategoryId === category.id}
+                  isLast={categoryIndex === group.categories.length - 1}
+                  draft={assignmentDrafts[category.id] ?? ''}
+                  isUpdating={isUpdatingBudget}
+                  readyToAssignCents={readyToAssignCents}
+                  moveSources={moveSources}
+                  onToggle={() =>
+                    setExpandedCategoryId((current) =>
+                      current === category.id ? null : category.id
+                    )
+                  }
+                  onDraftChange={(value) => {
+                    setAssignmentDrafts((current) => ({
+                      ...current,
+                      [category.id]: value,
+                    }));
+                  }}
+                  onAssignFromReady={(amountCents) =>
+                    void handleAssignMoney(category.id, amountCents)
+                  }
+                  onMoveFrom={(fromCategoryId, amountCents) =>
+                    void handleMoveMoney(fromCategoryId, category.id, amountCents)
+                  }
+                />
+              ))}
             </View>
-            {group.categories.map((category, categoryIndex) => (
-              <CategoryRow
-                key={category.id}
-                category={category}
-                currencyCode={budgetView.currencyCode}
-                isExpanded={expandedCategoryId === category.id}
-                isLast={categoryIndex === group.categories.length - 1}
-                draft={assignmentDrafts[category.id] ?? ''}
-                isUpdating={isUpdatingBudget}
-                readyToAssignCents={readyToAssignCents}
-                moveSources={moveSources}
-                onToggle={() =>
-                  setExpandedCategoryId((current) => (current === category.id ? null : category.id))
-                }
-                onDraftChange={(value) => {
-                  setAssignmentDrafts((current) => ({
-                    ...current,
-                    [category.id]: value,
-                  }));
-                }}
-                onAssignFromReady={(amountCents) =>
-                  void handleAssignMoney(category.id, amountCents)
-                }
-                onMoveFrom={(fromCategoryId, amountCents) =>
-                  void handleMoveMoney(fromCategoryId, category.id, amountCents)
-                }
-              />
-            ))}
-          </View>
-        ))}
+          ))
+        )}
       </View>
     </ScreenScroll>
   );

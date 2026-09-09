@@ -66,6 +66,7 @@ The result is a tight v1: one bank profile, one visible on-budget account, one c
 48. As a user, I want the app to remain useful even if a bank message has unusual wording, so that I can fall back to manual import instead of abandoning the transaction.
 49. As a user, I want the app to treat refunds and reversals as normal inflows in v1, so that the cash position stays correct without building a refund-linking subsystem.
 50. As a user, I want the app to remain fast and understandable, so that it feels like a focused personal finance tool instead of a bloated accounting platform.
+51. As a budgeter, I want to rename, add, and remove envelopes after onboarding, so that the budget can change as my spending does.
 
 ## Implementation Decisions
 
@@ -96,6 +97,7 @@ The result is a tight v1: one bank profile, one visible on-budget account, one c
 - The visible product surface is single-account in v1, but the schema should support multiple accounts so future expansion does not require a full rewrite.
 - The budget is month-based with carryover. Current-month budgeting is the only assignment target in v1; future-month assignment is out of scope.
 - Budget assignment is event-sourced at the month-category level. Assignment changes are stored as explicit events rather than overwriting a monthly assigned total.
+- Envelopes can be renamed, added, or removed after onboarding. Removing an envelope that still has leftover available cash returns that cash to Ready to Assign. Removal is blocked while non-ignored transactions still use that envelope. Used envelopes are archived rather than hard-deleted so historical month math and spending reports stay intact.
 - Budget numbers must be fully derived. Category available, assigned this month, activity this month, Ready to Assign, and reconciliation gap should not be stored as mutable totals maintained by UI screens.
 - Positive category balances carry forward between months. Negative overspending does not persist in the category; instead it reduces next month’s Ready to Assign.
 - The Inbox is a first-class product surface with at least three sections: needs review, needs manual import, and possible duplicates.

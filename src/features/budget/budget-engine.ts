@@ -305,12 +305,13 @@ function buildGroupViews(
   categoryTotals: Map<string, CategoryMonthTotals>
 ): BudgetCategoryGroupView[] {
   return [...groups]
+    .filter((group) => group.archivedAt == null)
     .sort((left, right) => left.sortOrder - right.sortOrder)
     .map((group) => ({
       id: group.id,
       name: group.name,
       categories: categories
-        .filter((category) => category.groupId === group.id)
+        .filter((category) => category.groupId === group.id && category.archivedAt == null)
         .sort((left, right) => left.sortOrder - right.sortOrder)
         .map((category) => {
           const totals = categoryTotals.get(category.id);
@@ -323,5 +324,6 @@ function buildGroupViews(
             availableCents: totals?.availableCents ?? 0,
           };
         }),
-    }));
+    }))
+    .filter((group) => group.categories.length > 0);
 }

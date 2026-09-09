@@ -14,6 +14,7 @@ import type {
   BudgetView,
   CanonicalTransaction,
   CompleteOnboardingInput,
+  EnvelopeCommand,
   IgnoreImportedTransactionInput,
   ImportOutcome,
   ManualTransactionInput,
@@ -512,6 +513,9 @@ function createBudgetStoreStub(): BudgetStore {
     completeOnboarding: vi.fn<(input: CompleteOnboardingInput, now?: Date) => Promise<BudgetView>>(
       async () => TEST_BUDGET_VIEW
     ),
+    applyEnvelopeCommand: vi.fn<(command: EnvelopeCommand, now?: Date) => Promise<BudgetView>>(
+      async () => TEST_BUDGET_VIEW
+    ),
     assignMoneyToCategory: vi.fn(async () => TEST_BUDGET_VIEW),
     moveMoneyBetweenCategories: vi.fn(async () => TEST_BUDGET_VIEW),
     createManualTransaction: vi.fn<
@@ -550,4 +554,3 @@ function createBudgetStoreStub(): BudgetStore {
     ]),
   };
 }
-

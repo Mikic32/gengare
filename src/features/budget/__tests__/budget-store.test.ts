@@ -1605,6 +1605,58 @@ describe('budget store bootstrap', () => {
   });
 });
 
+describe('budget store envelope edits', () => {
+  it('persists renamed, added, and removed envelopes', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent', 'Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+    const groupId = initialView.categoryGroups[0].id;
+    const rentId = initialView.categoryGroups[0].categories[0].id;
+    const groceriesId = initialView.categoryGroups[0].categories[1].id;
+
+    await store.assignMoneyToCategory(
+      { categoryId: groceriesId, amountCents: 20_000 },
+      new Date('2026-06-24T11:00:00.000Z')
+    );
+    await store.applyEnvelopeCommand(
+      { kind: 'rename_category', categoryId: rentId, name: 'Housing' },
+      new Date('2026-06-24T12:00:00.000Z')
+    );
+    await store.applyEnvelopeCommand(
+      { kind: 'create_category', groupId, name: 'Phone' },
+      new Date('2026-06-24T12:00:00.000Z')
+    );
+    const view = await store.applyEnvelopeCommand(
+      { kind: 'remove_category', categoryId: groceriesId },
+      new Date('2026-06-24T12:00:00.000Z')
+    );
+
+    expectAssignableCash(view, 125_500);
+    expect(view.categoryGroups[0].categories.map((category) => category.name)).toEqual([
+      'Housing',
+      'Phone',
+    ]);
+
+    const reloadedView = await store.getCurrentBudgetView(new Date('2026-06-24T12:00:00.000Z'));
+    expect(reloadedView?.categoryGroups[0].categories.map((category) => category.name)).toEqual([
+      'Housing',
+      'Phone',
+    ]);
+  });
+});
+
 describe('budget engine month math', () => {
   it('carries unassigned cash into later months', () => {
     const view = deriveBudgetView(
