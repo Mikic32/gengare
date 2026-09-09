@@ -4,12 +4,14 @@ import {
   EmptyState,
   ErrorState,
   LoadingState,
+  ProgressBar,
   ScreenScroll,
 } from '@/src/features/budget/app-components';
 import {
   currentMonthKey,
   formatMonthLabel,
   getErrorMessage,
+  moneyTextClass,
   shiftMonthKey,
 } from '@/src/features/budget/app-helpers';
 import { useAppShell } from '@/src/features/budget/app-shell';
@@ -102,6 +104,7 @@ export default function ReportsScreen() {
 
   const { cashflow, spendingByCategory } = report;
   const hasActivity = cashflow.inflowCents !== 0 || cashflow.outflowCents !== 0;
+  const maxSpentCents = Math.max(0, ...spendingByCategory.map((entry) => entry.spentCents));
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
@@ -130,17 +133,19 @@ export default function ReportsScreen() {
           <CashflowRow
             label="Inflow"
             amount={formatCurrency(cashflow.inflowCents, budgetView.currencyCode)}
+            cents={cashflow.inflowCents}
           />
           <CashflowRow
             label="Outflow"
             amount={formatCurrency(cashflow.outflowCents, budgetView.currencyCode)}
+            cents={-cashflow.outflowCents}
           />
           <View className="border-t border-border pt-3">
             <CashflowRow
               label="Net"
               amount={formatCurrency(cashflow.netCents, budgetView.currencyCode)}
+              cents={cashflow.netCents}
               emphasize
-              destructive={cashflow.netCents < 0}
             />
           </View>
         </View>
@@ -162,17 +167,21 @@ export default function ReportsScreen() {
             <View className="overflow-hidden rounded-2xl border border-border bg-card">
               {spendingByCategory.map((category, index) => {
                 const isLast = index === spendingByCategory.length - 1;
-
                 return (
                   <View
                     key={category.categoryId}
-                    className={isLast ? 'gap-1 p-5' : 'gap-1 border-b border-border p-5'}>
+                    className={isLast ? 'gap-2 p-5' : 'gap-2 border-b border-border p-5'}>
                     <View className="flex-row items-start justify-between gap-3">
                       <Text className="flex-1 font-semibold">{category.categoryName}</Text>
-                      <Text className="shrink-0 font-semibold">
+                      <Text
+                        className={moneyTextClass(-category.spentCents, 'shrink-0 font-semibold')}>
                         {formatCurrency(category.spentCents, budgetView.currencyCode)}
                       </Text>
                     </View>
+                    <ProgressBar
+                      value={maxSpentCents > 0 ? category.spentCents / maxSpentCents : 0}
+                      tone="destructive"
+                    />
                   </View>
                 );
               })}
@@ -187,26 +196,20 @@ export default function ReportsScreen() {
 function CashflowRow({
   label,
   amount,
+  cents,
   emphasize,
-  destructive,
 }: {
   label: string;
   amount: string;
+  cents: number;
   emphasize?: boolean;
-  destructive?: boolean;
 }) {
   return (
     <View className="flex-row items-baseline justify-between gap-3">
       <Text className={emphasize ? 'font-medium' : 'text-muted-foreground'}>{label}</Text>
       <Text
         numberOfLines={1}
-        className={
-          destructive
-            ? 'font-semibold text-destructive'
-            : emphasize
-              ? 'font-semibold'
-              : 'font-medium'
-        }>
+        className={moneyTextClass(cents, emphasize ? 'font-semibold' : 'font-medium')}>
         {amount}
       </Text>
     </View>

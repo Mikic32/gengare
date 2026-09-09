@@ -1,8 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
-import { THEME } from '@/lib/theme';
+import { usePalette } from '@/lib/theme';
 import { cn } from '@/lib/utils';
-import { useColorScheme } from 'nativewind';
 import * as React from 'react';
 import {
   ActivityIndicator,
@@ -35,11 +34,6 @@ type CategoryOption = {
   id: string;
   label: string;
 };
-
-function usePalette() {
-  const { colorScheme } = useColorScheme();
-  return THEME[colorScheme ?? 'light'];
-}
 
 export function FormField({
   label,
@@ -127,9 +121,11 @@ export function SelectChip({
 }
 
 export function LoadingState({ message }: { message: string }) {
+  const palette = usePalette();
+
   return (
     <View className="flex-1 items-center justify-center gap-3">
-      <ActivityIndicator />
+      <ActivityIndicator color={palette.primary} />
       <Text className="text-muted-foreground">{message}</Text>
     </View>
   );
@@ -244,7 +240,10 @@ export function KindToggle({
         style={value === 'outflow' ? { backgroundColor: palette.card } : undefined}
         onPress={() => onChange('outflow')}
         disabled={disabled}>
-        <Text className={value === 'outflow' ? 'font-semibold' : 'text-muted-foreground'}>
+        <Text
+          className={
+            value === 'outflow' ? 'font-semibold text-destructive' : 'text-muted-foreground'
+          }>
           Spending
         </Text>
       </Pressable>
@@ -253,7 +252,8 @@ export function KindToggle({
         style={value === 'inflow' ? { backgroundColor: palette.card } : undefined}
         onPress={() => onChange('inflow')}
         disabled={disabled}>
-        <Text className={value === 'inflow' ? 'font-semibold' : 'text-muted-foreground'}>
+        <Text
+          className={value === 'inflow' ? 'font-semibold text-primary' : 'text-muted-foreground'}>
           Income
         </Text>
       </Pressable>
@@ -325,6 +325,29 @@ export function DateQuickField({
           editable={!disabled}
         />
       ) : null}
+    </View>
+  );
+}
+
+export function ProgressBar({
+  value,
+  tone = 'primary',
+}: {
+  value: number;
+  tone?: 'primary' | 'destructive';
+}) {
+  const width = `${Math.round(Math.min(Math.max(value, 0), 1) * 100)}%`;
+
+  return (
+    <View className="h-1.5 overflow-hidden rounded-full bg-muted">
+      <View
+        className={
+          tone === 'destructive'
+            ? 'h-full rounded-full bg-destructive'
+            : 'h-full rounded-full bg-primary'
+        }
+        style={{ width }}
+      />
     </View>
   );
 }

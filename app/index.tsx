@@ -1,18 +1,21 @@
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
+import { usePalette } from '@/lib/theme';
 import {
   CategoryChips,
   ErrorBanner,
   ErrorState,
   FormField,
   LoadingState,
+  ProgressBar,
   ScreenScroll,
 } from '@/src/features/budget/app-components';
 import {
   centsToDecimalString,
   formatMonthLabel,
   getErrorMessage,
+  moneyTextClass,
   parseRequiredPositiveAmountToCents,
 } from '@/src/features/budget/app-helpers';
 import { useAppShell } from '@/src/features/budget/app-shell';
@@ -49,6 +52,7 @@ type EditableGroup = {
 
 export default function Screen() {
   const { refreshInboxCount, setOnboarded } = useAppShell();
+  const palette = usePalette();
   const [budgetView, setBudgetView] = React.useState<BudgetView | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -148,11 +152,11 @@ export default function Screen() {
           <View className="gap-2">
             <Text className="text-sm font-medium">Bank balance</Text>
             <TextInput
-              className="rounded-2xl border border-border bg-card px-4 py-4 text-3xl font-bold text-foreground"
+              className="rounded-2xl border border-border bg-card px-4 py-5 text-3xl font-bold text-foreground"
               value={startingBalance}
               onChangeText={setStartingBalance}
               placeholder="0.00"
-              placeholderTextColor="#71717a"
+              placeholderTextColor={palette.mutedForeground}
               keyboardType="decimal-pad"
               autoFocus
             />
@@ -186,7 +190,7 @@ export default function Screen() {
             <View className="flex-row items-center justify-between gap-3">
               <Text variant="large">Envelopes</Text>
               <Pressable onPress={() => setShowEnvelopeEditor((current) => !current)}>
-                <Text className="text-sm text-muted-foreground">
+                <Text className="text-sm font-medium text-primary">
                   {showEnvelopeEditor ? 'Done' : 'Edit'}
                 </Text>
               </Pressable>
@@ -218,12 +222,12 @@ export default function Screen() {
                             );
                           }}
                           placeholder="Group name"
-                          placeholderTextColor="#71717a"
+                          placeholderTextColor={palette.mutedForeground}
                         />
                       </View>
                       <Button
                         size="sm"
-                        variant="ghost"
+                        variant="ghostDestructive"
                         onPress={() => {
                           setGroups((current) => current.filter((entry) => entry.id !== group.id));
                         }}>
@@ -255,12 +259,12 @@ export default function Screen() {
                                 );
                               }}
                               placeholder="Category name"
-                              placeholderTextColor="#71717a"
+                              placeholderTextColor={palette.mutedForeground}
                             />
                           </View>
                           <Button
                             size="sm"
-                            variant="ghost"
+                            variant="ghostDestructive"
                             onPress={() => {
                               setGroups((current) =>
                                 current.map((entry) =>
@@ -461,6 +465,7 @@ function BudgetScreen({
           budgetView.moneyState.accountBalance.amountCents,
           budgetView.currencyCode
         )}
+        bankBalanceCents={budgetView.moneyState.accountBalance.amountCents}
         ledgerBalance={formatCurrency(approvedLedgerCents, budgetView.currencyCode)}
         gapCents={reconciliationGapCents}
         amountCents={readyToAssignCents}
@@ -503,7 +508,7 @@ function BudgetScreen({
 
       {overspentCategories.length > 0 ? (
         <Pressable
-          className="mt gap-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-4"
+          className="gap-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-4"
           onPress={() => setExpandedCategoryId(overspentCategories[0].id)}>
           <Text className="font-medium text-destructive">
             {overspentCategories.length === 1
@@ -527,7 +532,7 @@ function BudgetScreen({
                 setIsEditingEnvelopes((current) => !current);
                 setExpandedCategoryId(null);
               }}>
-              <Text className="text-sm text-muted-foreground">
+              <Text className="text-sm font-medium text-primary">
                 {isEditingEnvelopes ? 'Done' : 'Edit'}
               </Text>
             </Pressable>
@@ -601,12 +606,14 @@ function ReadyToAssignCard({
   ledgerBalance,
   gapCents,
   amountCents,
+  bankBalanceCents,
 }: {
   amount: string;
   bankBalance: string;
   ledgerBalance: string;
   gapCents: number;
   amountCents: number;
+  bankBalanceCents: number;
 }) {
   const helper =
     amountCents > 0
@@ -615,39 +622,70 @@ function ReadyToAssignCard({
         ? "You've given envelopes more than you have. Move money around."
         : 'Every dinar has a job.';
 
+  const isNegative = amountCents < 0;
+  const hasCash = amountCents > 0;
+
   return (
-    <View className="gap-4 rounded-2xl border border-border bg-card p-5">
+    <View
+      className={
+        isNegative
+          ? 'gap-4 rounded-2xl border border-destructive/30 bg-destructive/10 p-5'
+          : hasCash
+            ? 'gap-4 rounded-2xl border border-primary bg-primary p-5'
+            : 'gap-4 rounded-2xl border border-border bg-card p-5'
+      }>
       <View className="gap-1">
-        <Text className="text-sm text-muted-foreground">To assign</Text>
+        <Text
+          className={
+            hasCash ? 'text-sm text-primary-foreground/70' : 'text-sm text-muted-foreground'
+          }>
+          To assign
+        </Text>
         <Text
           numberOfLines={1}
           adjustsFontSizeToFit
           minimumFontScale={0.6}
           className={
-            amountCents < 0
-              ? 'text-3xl font-bold text-destructive'
-              : amountCents === 0
-                ? 'text-3xl font-bold text-muted-foreground'
-                : 'text-3xl font-bold'
+            hasCash
+              ? 'text-3xl font-bold text-primary-foreground'
+              : moneyTextClass(amountCents, 'text-3xl font-bold')
           }>
           {amount}
         </Text>
       </View>
       <View className="flex-row items-baseline justify-between gap-3">
-        <Text className="text-sm text-muted-foreground">In the bank</Text>
-        <Text className="text-base font-semibold" numberOfLines={1}>
+        <Text
+          className={
+            hasCash ? 'text-sm text-primary-foreground/70' : 'text-sm text-muted-foreground'
+          }>
+          In the bank
+        </Text>
+        <Text
+          className={
+            hasCash
+              ? 'text-base font-semibold text-primary-foreground'
+              : moneyTextClass(bankBalanceCents, 'text-base font-semibold')
+          }
+          numberOfLines={1}>
           {bankBalance}
         </Text>
       </View>
       {gapCents !== 0 ? (
         <View className="flex-row items-baseline justify-between gap-3">
-          <Text className="text-sm text-muted-foreground">Approved ledger</Text>
+          <Text
+            className={
+              hasCash ? 'text-sm text-primary-foreground/70' : 'text-sm text-muted-foreground'
+            }>
+            Approved ledger
+          </Text>
           <Text className="text-base font-semibold text-destructive" numberOfLines={1}>
             {ledgerBalance}
           </Text>
         </View>
       ) : null}
-      <Text className="text-muted-foreground">{helper}</Text>
+      <Text className={hasCash ? 'text-primary-foreground/80' : 'text-muted-foreground'}>
+        {helper}
+      </Text>
     </View>
   );
 }
@@ -721,14 +759,7 @@ function CategoryRow({
         <View className="flex-row items-center justify-between gap-3">
           <Text className="flex-1 font-medium">{category.name}</Text>
           <View className="flex-row items-center gap-2">
-            <Text
-              className={
-                isOverspent
-                  ? 'text-base font-semibold text-destructive'
-                  : category.availableCents === 0
-                    ? 'text-base font-semibold text-muted-foreground'
-                    : 'text-base font-semibold'
-              }>
+            <Text className={moneyTextClass(category.availableCents, 'text-base font-semibold')}>
               {formatCurrency(category.availableCents, currencyCode)}
             </Text>
             <Icon
@@ -747,6 +778,16 @@ function CategoryRow({
             <Text className="text-xs font-medium uppercase text-destructive">Overspent</Text>
           ) : null}
         </View>
+        <ProgressBar
+          value={
+            category.assignedCents > 0
+              ? Math.abs(Math.min(category.activityCents, 0)) / category.assignedCents
+              : isOverspent
+                ? 1
+                : 0
+          }
+          tone={isOverspent ? 'destructive' : 'primary'}
+        />
       </Pressable>
 
       {isExpanded ? (

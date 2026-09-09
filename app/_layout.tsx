@@ -1,6 +1,6 @@
 import '@/global.css';
 
-import { NAV_THEME, THEME } from '@/lib/theme';
+import { NAV_THEME, usePalette } from '@/lib/theme';
 import { AppShellProvider, useAppShell } from '@/src/features/budget/app-shell';
 import { ThemeProvider } from '@react-navigation/native';
 import { PortalHost } from '@rn-primitives/portal';
@@ -29,9 +29,8 @@ export default function RootLayout() {
 }
 
 function AppTabs() {
-  const { colorScheme } = useColorScheme();
   const { inboxCount, isOnboarded } = useAppShell();
-  const palette = THEME[colorScheme ?? 'light'];
+  const palette = usePalette();
   const showTabs = isOnboarded === true;
 
   return (
@@ -40,6 +39,7 @@ function AppTabs() {
         headerShown: false,
         tabBarActiveTintColor: palette.primary,
         tabBarInactiveTintColor: palette.mutedForeground,
+        tabBarLabelStyle: { fontWeight: '600' },
         tabBarStyle: showTabs
           ? {
               backgroundColor: palette.card,

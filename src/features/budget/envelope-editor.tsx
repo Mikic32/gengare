@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
+import { usePalette } from '@/lib/theme';
 import * as React from 'react';
 import { Alert, TextInput, View } from 'react-native';
 
@@ -47,7 +48,7 @@ export function EnvelopeEditor({
             </View>
             <Button
               size="sm"
-              variant="ghost"
+              variant="ghostDestructive"
               disabled={disabled}
               onPress={() =>
                 confirmRemove({
@@ -75,7 +76,7 @@ export function EnvelopeEditor({
                 </View>
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="ghostDestructive"
                   disabled={disabled}
                   onPress={() =>
                     confirmRemove({
@@ -123,6 +124,7 @@ function EditableName({
   emphasized?: boolean;
   onSubmit: (name: string) => void;
 }) {
+  const palette = usePalette();
   const [draft, setDraft] = React.useState(value);
 
   React.useEffect(() => {
@@ -153,7 +155,7 @@ function EditableName({
       onEndEditing={commit}
       onSubmitEditing={commit}
       placeholder={placeholder}
-      placeholderTextColor="#71717a"
+      placeholderTextColor={palette.mutedForeground}
       editable={!disabled}
     />
   );

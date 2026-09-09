@@ -18,6 +18,7 @@ import {
   formatImportOutcomeReason,
   formatShortDate,
   getErrorMessage,
+  moneyTextClass,
   parseDateInputToIso,
   parseOptionalBalanceAfterToCents,
   parseRequiredPositiveAmountToCents,
@@ -513,12 +514,7 @@ function ReviewTransactionCard({
             {isOutflow ? ' · Spending' : ' · Income'}
           </Text>
         </View>
-        <Text
-          className={
-            transaction.amountCents < 0
-              ? 'text-lg font-semibold text-destructive'
-              : 'text-lg font-semibold'
-          }>
+        <Text className={moneyTextClass(transaction.amountCents, 'text-lg font-semibold')}>
           {formatCurrency(transaction.amountCents, budgetView.currencyCode)}
         </Text>
       </View>

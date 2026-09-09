@@ -16,6 +16,7 @@ import {
   formatShortDate,
   getErrorMessage,
   getLocalDateKey,
+  moneyTextClass,
   parseDateInputToIso,
   parseRequiredPositiveAmountToCents,
   transactionSourceLabel,
@@ -356,11 +357,10 @@ export default function TransactionsScreen() {
                         </View>
                         <Text
                           numberOfLines={1}
-                          className={
-                            transaction.amountCents < 0
-                              ? 'shrink-0 font-semibold text-destructive'
-                              : 'shrink-0 font-semibold'
-                          }>
+                          className={moneyTextClass(
+                            transaction.amountCents,
+                            'shrink-0 font-semibold'
+                          )}>
                           {formatCurrency(transaction.amountCents, budgetView.currencyCode)}
                         </Text>
                       </View>

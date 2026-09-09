@@ -1,8 +1,17 @@
+import { cn } from '@/lib/utils';
+
 import { toLocalDateKey, toMonthKey } from './budget-engine';
 import { parseDecimalMoneyToCents } from './money';
 import type { CanonicalTransaction, ImportOutcome, TransactionSource } from './types';
 
 export { createSampleDebugSmsBody } from './sms-import';
+
+export function moneyTextClass(cents: number, className?: string) {
+  return cn(
+    cents < 0 ? 'text-destructive' : cents > 0 ? 'text-primary' : 'text-muted-foreground',
+    className
+  );
+}
 
 export function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
