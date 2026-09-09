@@ -22,7 +22,13 @@ import { useAppShell } from '@/src/features/budget/app-shell';
 import { budgetAppStore } from '@/src/features/budget/app-store';
 import { BackupActions } from '@/src/features/budget/backup-actions';
 import { DEFAULT_CATEGORY_GROUPS } from '@/src/features/budget/defaults';
-import { EnvelopeEditor } from '@/src/features/budget/envelope-editor';
+import {
+  createEditableGroups,
+  EnvelopeGroupCard,
+  OnboardingEnvelopeEditor,
+  useLiveEnvelopeEditor,
+  type EditableGroup,
+} from '@/src/features/budget/envelope-editor';
 import { formatCurrency, parseDecimalMoneyToCents } from '@/src/features/budget/money';
 import type {
   BudgetCategoryView,
@@ -39,17 +45,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 const READY_SOURCE_ID = 'ready';
 
-type EditableCategory = {
-  id: string;
-  name: string;
-};
-
-type EditableGroup = {
-  id: string;
-  name: string;
-  categories: EditableCategory[];
-};
-
 export default function Screen() {
   const { refreshInboxCount, setOnboarded } = useAppShell();
   const palette = usePalette();
@@ -62,7 +57,6 @@ export default function Screen() {
   const [currencyCode, setCurrencyCode] = React.useState('RSD');
   const [startingBalance, setStartingBalance] = React.useState('0.00');
   const [showAccountDetails, setShowAccountDetails] = React.useState(false);
-  const [showEnvelopeEditor, setShowEnvelopeEditor] = React.useState(false);
   const [groups, setGroups] = React.useState<EditableGroup[]>(() =>
     createEditableGroups(DEFAULT_CATEGORY_GROUPS)
   );
@@ -124,10 +118,6 @@ export default function Screen() {
     }
   }
 
-  const envelopePreview = groups
-    .flatMap((group) => group.categories.map((category) => category.name.trim()))
-    .filter(Boolean);
-
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       {isLoading ? (
@@ -186,135 +176,7 @@ export default function Screen() {
             </View>
           ) : null}
 
-          <View className="gap-3">
-            <View className="flex-row items-center justify-between gap-3">
-              <Text variant="large">Envelopes</Text>
-              <Pressable onPress={() => setShowEnvelopeEditor((current) => !current)}>
-                <Text className="text-sm font-medium text-primary">
-                  {showEnvelopeEditor ? 'Done' : 'Edit'}
-                </Text>
-              </Pressable>
-            </View>
-
-            {showEnvelopeEditor ? (
-              <View className="gap-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onPress={() => setGroups((current) => [...current, createEmptyGroup()])}>
-                  <Text>Add group</Text>
-                </Button>
-
-                {groups.map((group) => (
-                  <View
-                    key={group.id}
-                    className="gap-3 rounded-2xl border border-border bg-card p-4">
-                    <View className="flex-row items-center gap-2">
-                      <View className="flex-1">
-                        <TextInput
-                          className="rounded-xl border border-border bg-background px-4 py-3 text-base font-semibold text-foreground"
-                          value={group.name}
-                          onChangeText={(value) => {
-                            setGroups((current) =>
-                              current.map((entry) =>
-                                entry.id === group.id ? { ...entry, name: value } : entry
-                              )
-                            );
-                          }}
-                          placeholder="Group name"
-                          placeholderTextColor={palette.mutedForeground}
-                        />
-                      </View>
-                      <Button
-                        size="sm"
-                        variant="ghostDestructive"
-                        onPress={() => {
-                          setGroups((current) => current.filter((entry) => entry.id !== group.id));
-                        }}>
-                        <Text>Remove</Text>
-                      </Button>
-                    </View>
-
-                    <View className="gap-2">
-                      {group.categories.map((category) => (
-                        <View key={category.id} className="flex-row items-center gap-2">
-                          <View className="flex-1">
-                            <TextInput
-                              className="rounded-xl border border-border bg-background px-4 py-3 text-foreground"
-                              value={category.name}
-                              onChangeText={(value) => {
-                                setGroups((current) =>
-                                  current.map((entry) =>
-                                    entry.id !== group.id
-                                      ? entry
-                                      : {
-                                          ...entry,
-                                          categories: entry.categories.map((item) =>
-                                            item.id === category.id
-                                              ? { ...item, name: value }
-                                              : item
-                                          ),
-                                        }
-                                  )
-                                );
-                              }}
-                              placeholder="Category name"
-                              placeholderTextColor={palette.mutedForeground}
-                            />
-                          </View>
-                          <Button
-                            size="sm"
-                            variant="ghostDestructive"
-                            onPress={() => {
-                              setGroups((current) =>
-                                current.map((entry) =>
-                                  entry.id !== group.id
-                                    ? entry
-                                    : {
-                                        ...entry,
-                                        categories: entry.categories.filter(
-                                          (item) => item.id !== category.id
-                                        ),
-                                      }
-                                )
-                              );
-                            }}>
-                            <Text>Remove</Text>
-                          </Button>
-                        </View>
-                      ))}
-                    </View>
-
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onPress={() => {
-                        setGroups((current) =>
-                          current.map((entry) =>
-                            entry.id !== group.id
-                              ? entry
-                              : {
-                                  ...entry,
-                                  categories: [...entry.categories, createEmptyCategory()],
-                                }
-                          )
-                        );
-                      }}>
-                      <Text>Add category</Text>
-                    </Button>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <View className="flex-row flex-wrap gap-2">
-                {envelopePreview.map((name, index) => (
-                  <View key={`${name}-${index}`} className="rounded-full bg-muted px-3 py-1.5">
-                    <Text className="text-sm">{name}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
-          </View>
+          <OnboardingEnvelopeEditor groups={groups} onChange={setGroups} />
 
           {submitError ? <ErrorBanner message={submitError} /> : null}
 
@@ -350,7 +212,6 @@ function BudgetScreen({
   const { inboxCount } = useAppShell();
   const [assignmentDrafts, setAssignmentDrafts] = React.useState<Record<string, string>>({});
   const [expandedCategoryId, setExpandedCategoryId] = React.useState<string | null>(null);
-  const [isEditingEnvelopes, setIsEditingEnvelopes] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [isUpdatingBudget, setIsUpdatingBudget] = React.useState(false);
 
@@ -450,6 +311,13 @@ function BudgetScreen({
     );
   }
 
+  const envelopeEditor = useLiveEnvelopeEditor({
+    disabled: isUpdatingBudget,
+    groups: budgetView.categoryGroups,
+    currencyCode: budgetView.currencyCode,
+    onCommand: handleEnvelopeCommand,
+  });
+
   const gapAmount = formatCurrency(Math.abs(reconciliationGapCents), budgetView.currencyCode);
 
   return (
@@ -527,74 +395,52 @@ function BudgetScreen({
         <View className="gap-1">
           <View className="flex-row items-center justify-between gap-3">
             <Text variant="large">Envelopes</Text>
-            <Pressable
-              onPress={() => {
-                setIsEditingEnvelopes((current) => !current);
-                setExpandedCategoryId(null);
-              }}>
-              <Text className="text-sm font-medium text-primary">
-                {isEditingEnvelopes ? 'Done' : 'Edit'}
-              </Text>
-            </Pressable>
+            {envelopeEditor.addButton}
           </View>
-          {isEditingEnvelopes ? (
-            <Text className="text-sm text-muted-foreground">
-              Rename, add, or remove envelopes. Leftover cash goes back to Ready to Assign.
-            </Text>
-          ) : readyToAssignCents > 0 ? (
+          {readyToAssignCents > 0 ? (
             <Text className="text-sm text-muted-foreground">
               Tap an envelope to give this money a job.
             </Text>
           ) : null}
         </View>
 
-        {isEditingEnvelopes ? (
-          <EnvelopeEditor
-            budgetView={budgetView}
-            disabled={isUpdatingBudget}
-            onCommand={handleEnvelopeCommand}
-          />
-        ) : (
-          budgetView.categoryGroups.map((group) => (
-            <View
-              key={group.id}
-              className="overflow-hidden rounded-2xl border border-border bg-card">
-              <View className="border-b border-border px-5 py-3">
-                <Text className="font-semibold">{group.name}</Text>
-              </View>
-              {group.categories.map((category, categoryIndex) => (
-                <CategoryRow
-                  key={category.id}
-                  category={category}
-                  currencyCode={budgetView.currencyCode}
-                  isExpanded={expandedCategoryId === category.id}
-                  isLast={categoryIndex === group.categories.length - 1}
-                  draft={assignmentDrafts[category.id] ?? ''}
-                  isUpdating={isUpdatingBudget}
-                  readyToAssignCents={readyToAssignCents}
-                  moveSources={moveSources}
-                  onToggle={() =>
-                    setExpandedCategoryId((current) =>
-                      current === category.id ? null : category.id
-                    )
-                  }
-                  onDraftChange={(value) => {
-                    setAssignmentDrafts((current) => ({
-                      ...current,
-                      [category.id]: value,
-                    }));
-                  }}
-                  onAssignFromReady={(amountCents) =>
-                    void handleAssignMoney(category.id, amountCents)
-                  }
-                  onMoveFrom={(fromCategoryId, amountCents) =>
-                    void handleMoveMoney(fromCategoryId, category.id, amountCents)
-                  }
-                />
-              ))}
-            </View>
-          ))
-        )}
+        {budgetView.categoryGroups.map((group) => (
+          <EnvelopeGroupCard
+            key={group.id}
+            title={group.name}
+            onLongPress={() => envelopeEditor.openGroupMenu(group)}>
+            {group.categories.map((category, categoryIndex) => (
+              <CategoryRow
+                key={category.id}
+                category={category}
+                currencyCode={budgetView.currencyCode}
+                isExpanded={expandedCategoryId === category.id}
+                isLast={categoryIndex === group.categories.length - 1}
+                draft={assignmentDrafts[category.id] ?? ''}
+                isUpdating={isUpdatingBudget}
+                readyToAssignCents={readyToAssignCents}
+                moveSources={moveSources}
+                onToggle={() =>
+                  setExpandedCategoryId((current) => (current === category.id ? null : category.id))
+                }
+                onLongPress={() => envelopeEditor.openCategoryMenu(category)}
+                onDraftChange={(value) => {
+                  setAssignmentDrafts((current) => ({
+                    ...current,
+                    [category.id]: value,
+                  }));
+                }}
+                onAssignFromReady={(amountCents) =>
+                  void handleAssignMoney(category.id, amountCents)
+                }
+                onMoveFrom={(fromCategoryId, amountCents) =>
+                  void handleMoveMoney(fromCategoryId, category.id, amountCents)
+                }
+              />
+            ))}
+          </EnvelopeGroupCard>
+        ))}
+        {envelopeEditor.dialog}
       </View>
     </ScreenScroll>
   );
@@ -700,6 +546,7 @@ function CategoryRow({
   readyToAssignCents,
   moveSources,
   onToggle,
+  onLongPress,
   onDraftChange,
   onAssignFromReady,
   onMoveFrom,
@@ -713,6 +560,7 @@ function CategoryRow({
   readyToAssignCents: number;
   moveSources: { id: string; label: string }[];
   onToggle: () => void;
+  onLongPress: () => void;
   onDraftChange: (value: string) => void;
   onAssignFromReady: (amountCents?: number) => void;
   onMoveFrom: (fromCategoryId: string, amountCents?: number) => void;
@@ -755,7 +603,11 @@ function CategoryRow({
 
   return (
     <View className={isLast ? undefined : 'border-b border-border'}>
-      <Pressable className="gap-1 px-5 py-4 active:bg-muted/40" onPress={onToggle}>
+      <Pressable
+        className="gap-1 px-5 py-4 active:bg-muted/40"
+        delayLongPress={400}
+        onPress={onToggle}
+        onLongPress={onLongPress}>
         <View className="flex-row items-center justify-between gap-3">
           <Text className="flex-1 font-medium">{category.name}</Text>
           <View className="flex-row items-center gap-2">
@@ -843,36 +695,4 @@ function CategoryRow({
       ) : null}
     </View>
   );
-}
-
-function createEditableGroups(input: CompleteOnboardingInput['categoryGroups']): EditableGroup[] {
-  return input.map((group) => ({
-    id: createClientId('group'),
-    name: group.name,
-    categories: group.categories.map((category) => ({
-      id: createClientId('category'),
-      name: category,
-    })),
-  }));
-}
-
-function createEmptyGroup(): EditableGroup {
-  return {
-    id: createClientId('group'),
-    name: '',
-    categories: [createEmptyCategory()],
-  };
-}
-
-function createEmptyCategory(): EditableCategory {
-  return {
-    id: createClientId('category'),
-    name: '',
-  };
-}
-
-let clientIdCounter = 1;
-
-function createClientId(prefix: string) {
-  return `${prefix}-${clientIdCounter++}`;
 }
