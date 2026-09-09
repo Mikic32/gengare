@@ -196,9 +196,16 @@ export type AssignableCashView = {
   derivedFrom: 'approved_categoryless_inflows_minus_assignments_and_overspending';
 };
 
+export type ReconciliationGapView = {
+  amountCents: number;
+  approvedLedgerCents: number;
+  derivedFrom: 'authoritative_minus_approved_ledger';
+};
+
 export type BudgetMoneyState = {
   accountBalance: AccountBalanceView;
   assignableCash: AssignableCashView;
+  reconciliationGap: ReconciliationGapView;
 };
 
 export type BudgetView = {

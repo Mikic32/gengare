@@ -2,6 +2,7 @@ import { deriveBudgetView, toMonthKey } from './budget-engine';
 import { orchestrateSmsImport } from './import-orchestration';
 import { applyCreateManualTransaction, applyUpdateManualTransaction } from './manual-transactions';
 import { applyCompleteOnboarding } from './onboarding';
+import { applyCreateReconciliationAdjustment } from './reconciliation';
 import { applyTransactionWorkflow } from './transaction-workflow';
 import type {
   ApproveImportedTransactionInput,
@@ -89,6 +90,7 @@ export type BudgetStore = {
   ignoreImportedTransaction(input: IgnoreImportedTransactionInput, now?: Date): Promise<BudgetView>;
   recoverUnparseableSms(input: RecoverUnparseableSmsInput, now?: Date): Promise<BudgetView>;
   ignoreUnparseableSms(input: IgnoreUnparseableSmsInput, now?: Date): Promise<BudgetView>;
+  createReconciliationAdjustment(now?: Date): Promise<BudgetView>;
   importDebugSms(input: DebugSmsImportInput, now?: Date): Promise<DebugSmsImportResult>;
 };
 
@@ -307,6 +309,16 @@ export function createBudgetStore(storage: BudgetStorage): BudgetStore {
         await storage.updateImportOutcome(
           getImportOutcomeById(nextSnapshot, input.importOutcomeId)
         );
+        return deriveBudgetView(nextSnapshot, now);
+      });
+    },
+
+    async createReconciliationAdjustment(now = new Date()) {
+      return runSerializedMutation(async () => {
+        const snapshot = await storage.readSnapshot();
+        const nextSnapshot = applyCreateReconciliationAdjustment(snapshot, now);
+        const nextTransaction = getAppendedTransaction(snapshot, nextSnapshot);
+        await storage.appendTransaction(nextTransaction);
         return deriveBudgetView(nextSnapshot, now);
       });
     },

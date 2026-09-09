@@ -334,6 +334,8 @@ function BudgetScreen({
   const [isUpdatingBudget, setIsUpdatingBudget] = React.useState(false);
 
   const readyToAssignCents = budgetView.moneyState.assignableCash.amountCents;
+  const reconciliationGapCents = budgetView.moneyState.reconciliationGap.amountCents;
+  const approvedLedgerCents = budgetView.moneyState.reconciliationGap.approvedLedgerCents;
   const overspentCategories = budgetView.categoryGroups.flatMap((group) =>
     group.categories.filter((category) => category.availableCents < 0)
   );
@@ -413,6 +415,15 @@ function BudgetScreen({
     setExpandedCategoryId(null);
   }
 
+  async function handleCreateReconciliationAdjustment() {
+    await runBudgetUpdate(
+      () => budgetAppStore.createReconciliationAdjustment(new Date()),
+      'Could not reconcile'
+    );
+  }
+
+  const gapAmount = formatCurrency(Math.abs(reconciliationGapCents), budgetView.currencyCode);
+
   return (
     <ScreenScroll>
       <View className="gap-1 pr-14">
@@ -426,12 +437,14 @@ function BudgetScreen({
           budgetView.moneyState.accountBalance.amountCents,
           budgetView.currencyCode
         )}
+        ledgerBalance={formatCurrency(approvedLedgerCents, budgetView.currencyCode)}
+        gapCents={reconciliationGapCents}
         amountCents={readyToAssignCents}
       />
 
       {inboxCount > 0 ? (
         <Pressable
-          className="rounded-2xl mt-1 border border-amber-500/30 bg-amber-500/10 p-4 active:bg-amber-500/20"
+          className="mt-1 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 active:bg-amber-500/20"
           onPress={() => router.push('/inbox')}>
           <Text className="font-medium">
             {inboxCount === 1 ? '1 bank message waiting' : `${inboxCount} bank messages waiting`}
@@ -442,9 +455,31 @@ function BudgetScreen({
         </Pressable>
       ) : null}
 
+      {reconciliationGapCents !== 0 ? (
+        <View className="gap-2 rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
+          <Text className="font-medium text-destructive">Ledger is {gapAmount} off the bank</Text>
+          <Text className="text-sm text-muted-foreground">
+            {reconciliationGapCents > 0
+              ? 'The bank has more cash than the approved ledger. Add an adjustment instead of rewriting history.'
+              : 'The bank has less cash than the approved ledger. Add an adjustment instead of rewriting history.'}
+          </Text>
+          <Button
+            onPress={() => void handleCreateReconciliationAdjustment()}
+            disabled={isUpdatingBudget}>
+            <Text>
+              {isUpdatingBudget
+                ? 'Saving…'
+                : reconciliationGapCents > 0
+                  ? `Add ${gapAmount} adjustment`
+                  : `Remove ${gapAmount} adjustment`}
+            </Text>
+          </Button>
+        </View>
+      ) : null}
+
       {overspentCategories.length > 0 ? (
         <Pressable
-          className="gap-1 rounded-2xl mt  border border-destructive/30 bg-destructive/10 p-4"
+          className="mt gap-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-4"
           onPress={() => setExpandedCategoryId(overspentCategories[0].id)}>
           <Text className="font-medium text-destructive">
             {overspentCategories.length === 1
@@ -515,10 +550,14 @@ function BudgetScreen({
 function ReadyToAssignCard({
   amount,
   bankBalance,
+  ledgerBalance,
+  gapCents,
   amountCents,
 }: {
   amount: string;
   bankBalance: string;
+  ledgerBalance: string;
+  gapCents: number;
   amountCents: number;
 }) {
   const helper =
@@ -552,6 +591,14 @@ function ReadyToAssignCard({
           {bankBalance}
         </Text>
       </View>
+      {gapCents !== 0 ? (
+        <View className="flex-row items-baseline justify-between gap-3">
+          <Text className="text-sm text-muted-foreground">Approved ledger</Text>
+          <Text className="text-base font-semibold text-destructive" numberOfLines={1}>
+            {ledgerBalance}
+          </Text>
+        </View>
+      ) : null}
       <Text className="text-muted-foreground">{helper}</Text>
     </View>
   );

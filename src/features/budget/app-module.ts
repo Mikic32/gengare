@@ -69,6 +69,7 @@ export type BudgetAppStore = {
   ): Promise<InboxScreenData>;
   recoverUnparseableSms(input: RecoverUnparseableSmsInput, now?: Date): Promise<InboxScreenData>;
   ignoreUnparseableSms(input: IgnoreUnparseableSmsInput, now?: Date): Promise<InboxScreenData>;
+  createReconciliationAdjustment(now?: Date): Promise<BudgetView>;
 };
 
 export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
@@ -170,6 +171,10 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
     async ignoreUnparseableSms(input, now = new Date()) {
       const budgetView = await store.ignoreUnparseableSms(input, now);
       return hydrateInboxScreenData(budgetView);
+    },
+
+    createReconciliationAdjustment(now = new Date()) {
+      return store.createReconciliationAdjustment(now);
     },
   };
 }

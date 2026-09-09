@@ -137,6 +137,18 @@ describe('budget app store', () => {
     expect(screenData.possibleDuplicates).toEqual([]);
     expect(screenData.manualImportTasks).toEqual([]);
   });
+
+  it('returns the updated budget view after creating a reconciliation adjustment', async () => {
+    const store = createBudgetStoreStub();
+    const appStore = createBudgetAppStore(store);
+
+    const view = await appStore.createReconciliationAdjustment(
+      new Date('2026-07-07T12:00:00.000Z')
+    );
+
+    expect(store.createReconciliationAdjustment).toHaveBeenCalledTimes(1);
+    expect(view).toBe(TEST_BUDGET_VIEW);
+  });
 });
 
 const TEST_BUDGET_VIEW: BudgetView = {
@@ -151,6 +163,11 @@ const TEST_BUDGET_VIEW: BudgetView = {
     assignableCash: {
       amountCents: 45_000,
       derivedFrom: 'approved_categoryless_inflows_minus_assignments_and_overspending',
+    },
+    reconciliationGap: {
+      amountCents: 0,
+      approvedLedgerCents: 120_000,
+      derivedFrom: 'authoritative_minus_approved_ledger',
     },
   },
   categoryGroups: [
@@ -327,6 +344,9 @@ function createBudgetStoreStub(): BudgetStore {
     >(async () => TEST_BUDGET_VIEW),
     recoverUnparseableSms: vi.fn(async () => TEST_BUDGET_VIEW),
     ignoreUnparseableSms: vi.fn(async () => TEST_BUDGET_VIEW),
+    createReconciliationAdjustment: vi.fn<(now?: Date) => Promise<BudgetView>>(
+      async () => TEST_BUDGET_VIEW
+    ),
     importDebugSms: vi.fn<
       (input: DebugSmsImportInput, now?: Date) => Promise<DebugSmsImportResult>
     >(async () => TEST_IMPORT_RESULT),

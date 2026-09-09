@@ -308,6 +308,61 @@ describe('budget store bootstrap', () => {
     });
   });
 
+  it('persists a reconciliation adjustment that closes the ledger gap', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Rent'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    await store.createManualTransaction(
+      {
+        kind: 'outflow',
+        amountCents: 10_000,
+        occurredAt: '2026-06-25T09:00:00.000Z',
+        categoryId: initialView.categoryGroups[0].categories[0].id,
+        payee: 'Market',
+        memo: null,
+      },
+      new Date('2026-06-25T09:00:00.000Z')
+    );
+
+    const driftedView = await store.getCurrentBudgetView(new Date('2026-06-26T10:00:00.000Z'));
+    expectReconciliationGap(driftedView, 10_000, 115_500);
+
+    const reconciledView = await store.createReconciliationAdjustment(
+      new Date('2026-06-26T10:00:00.000Z')
+    );
+
+    expectReconciliationGap(reconciledView, 0, 125_500);
+    expectAccountBalance(reconciledView, 125_500);
+    expectAssignableCash(reconciledView, 135_500);
+
+    const transactions = await store.getTransactions();
+    expect(transactions[0]).toMatchObject({
+      source: 'reconciliation',
+      kind: 'inflow',
+      status: 'approved',
+      amountCents: 10_000,
+      categoryId: null,
+      balanceAfterCents: null,
+    });
+
+    const reloadedView = await store.getCurrentBudgetView(new Date('2026-06-26T10:00:00.000Z'));
+    expect(reloadedView).toEqual(reconciledView);
+  });
+
   it('imports a debug SMS as a needs-review candidate and updates account balance before approval', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
 
@@ -1652,6 +1707,165 @@ describe('budget engine month math', () => {
 
     expectAccountBalance(view, 200_000);
   });
+
+  it('derives a zero reconciliation gap when the approved ledger matches bank evidence', () => {
+    const view = deriveBudgetView(
+      {
+        account: {
+          id: 'account-1',
+          name: 'Main account',
+          currencyCode: 'RSD',
+          createdAt: '2026-06-24T10:00:00.000Z',
+        },
+        categoryGroups: [],
+        categories: [],
+        transactions: [
+          {
+            id: 'txn-1',
+            accountId: 'account-1',
+            source: 'starting_balance',
+            kind: 'inflow',
+            status: 'approved',
+            amountCents: 125_500,
+            occurredAt: '2026-06-24T10:00:00.000Z',
+            categoryId: null,
+            balanceAfterCents: 125_500,
+            payee: null,
+            memo: 'Starting balance',
+            createdAt: '2026-06-24T10:00:00.000Z',
+          },
+        ],
+        assignmentEvents: [],
+        rawSmsMessages: [],
+        smsParseResults: [],
+        importOutcomes: [],
+      },
+      new Date('2026-06-24T12:00:00.000Z')
+    );
+
+    expectReconciliationGap(view, 0, 125_500);
+  });
+
+  it('derives a negative gap when newer bank evidence is still waiting for review', () => {
+    const view = deriveBudgetView(
+      {
+        account: {
+          id: 'account-1',
+          name: 'Main account',
+          currencyCode: 'RSD',
+          createdAt: '2026-06-24T10:00:00.000Z',
+        },
+        categoryGroups: [],
+        categories: [],
+        transactions: [
+          {
+            id: 'txn-1',
+            accountId: 'account-1',
+            source: 'starting_balance',
+            kind: 'inflow',
+            status: 'approved',
+            amountCents: 125_500,
+            occurredAt: '2026-06-24T10:00:00.000Z',
+            categoryId: null,
+            balanceAfterCents: 125_500,
+            payee: null,
+            memo: 'Starting balance',
+            createdAt: '2026-06-24T10:00:00.000Z',
+          },
+          {
+            id: 'txn-2',
+            accountId: 'account-1',
+            source: 'sms',
+            kind: 'outflow',
+            status: 'needs_review',
+            amountCents: -10_000,
+            occurredAt: '2026-06-25T09:00:00.000Z',
+            categoryId: null,
+            balanceAfterCents: 115_500,
+            payee: 'Market',
+            memo: null,
+            createdAt: '2026-06-25T09:01:00.000Z',
+          },
+        ],
+        assignmentEvents: [],
+        rawSmsMessages: [],
+        smsParseResults: [],
+        importOutcomes: [],
+      },
+      new Date('2026-06-25T12:00:00.000Z')
+    );
+
+    expectAccountBalance(view, 115_500);
+    expectReconciliationGap(view, -10_000, 125_500);
+  });
+
+  it('derives a positive gap when the approved ledger is behind the bank', () => {
+    const view = deriveBudgetView(
+      {
+        account: {
+          id: 'account-1',
+          name: 'Main account',
+          currencyCode: 'RSD',
+          createdAt: '2026-06-24T10:00:00.000Z',
+        },
+        categoryGroups: [
+          {
+            id: 'group-1',
+            name: 'Essentials',
+            sortOrder: 0,
+            createdAt: '2026-06-24T10:00:00.000Z',
+          },
+        ],
+        categories: [
+          {
+            id: 'category-1',
+            groupId: 'group-1',
+            name: 'Groceries',
+            sortOrder: 0,
+            createdAt: '2026-06-24T10:00:00.000Z',
+          },
+        ],
+        transactions: [
+          {
+            id: 'txn-1',
+            accountId: 'account-1',
+            source: 'starting_balance',
+            kind: 'inflow',
+            status: 'approved',
+            amountCents: 125_500,
+            occurredAt: '2026-06-24T10:00:00.000Z',
+            categoryId: null,
+            balanceAfterCents: 125_500,
+            payee: null,
+            memo: 'Starting balance',
+            createdAt: '2026-06-24T10:00:00.000Z',
+          },
+          {
+            id: 'txn-2',
+            accountId: 'account-1',
+            source: 'manual',
+            kind: 'outflow',
+            status: 'approved',
+            amountCents: -10_000,
+            occurredAt: '2026-06-25T09:00:00.000Z',
+            categoryId: 'category-1',
+            balanceAfterCents: null,
+            payee: 'Market',
+            memo: null,
+            createdAt: '2026-06-25T09:00:00.000Z',
+          },
+        ],
+        assignmentEvents: [],
+        rawSmsMessages: [],
+        smsParseResults: [],
+        importOutcomes: [],
+      },
+      new Date('2026-06-25T12:00:00.000Z')
+    );
+
+    expectAccountBalance(view, 125_500);
+    expectReconciliationGap(view, 10_000, 115_500);
+  });
 });
 
 function expectAccountBalance(
@@ -1677,6 +1891,29 @@ function expectAssignableCash(
   expect(view?.moneyState.assignableCash).toEqual({
     amountCents,
     derivedFrom: 'approved_categoryless_inflows_minus_assignments_and_overspending',
+  });
+}
+
+function expectReconciliationGap(
+  view:
+    | {
+        moneyState: {
+          reconciliationGap: {
+            amountCents: number;
+            approvedLedgerCents: number;
+            derivedFrom: string;
+          };
+        };
+      }
+    | null
+    | undefined,
+  amountCents: number,
+  approvedLedgerCents: number
+) {
+  expect(view?.moneyState.reconciliationGap).toEqual({
+    amountCents,
+    approvedLedgerCents,
+    derivedFrom: 'authoritative_minus_approved_ledger',
   });
 }
 

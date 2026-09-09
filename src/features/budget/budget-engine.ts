@@ -23,6 +23,7 @@ type MonthLedger = {
 const ACCOUNT_BALANCE_RULE = 'latest_non_ignored_balance_evidence' as const;
 const ASSIGNABLE_CASH_RULE =
   'approved_categoryless_inflows_minus_assignments_and_overspending' as const;
+const RECONCILIATION_GAP_RULE = 'authoritative_minus_approved_ledger' as const;
 
 export function deriveBudgetView(snapshot: BudgetSnapshot, now: Date = new Date()): BudgetView {
   if (!snapshot.account) {
@@ -88,7 +89,11 @@ export function deriveBudgetView(snapshot: BudgetSnapshot, now: Date = new Date(
       snapshot.transactions,
       monthLedgers.get(monthKey)?.assignableCashCents ?? 0
     ),
-    categoryGroups: buildGroupViews(snapshot.categoryGroups, snapshot.categories, currentMonthCategoryTotals),
+    categoryGroups: buildGroupViews(
+      snapshot.categoryGroups,
+      snapshot.categories,
+      currentMonthCategoryTotals
+    ),
   };
 }
 
@@ -126,7 +131,10 @@ function getPreviousCarry(monthLedgers: Map<string, MonthLedger>, monthKey: stri
     return new Map<string, number>();
   }
 
-  return monthLedgers.get(orderedKeys[monthIndex - 1])?.positiveCarryByCategory ?? new Map<string, number>();
+  return (
+    monthLedgers.get(orderedKeys[monthIndex - 1])?.positiveCarryByCategory ??
+    new Map<string, number>()
+  );
 }
 
 function buildCategoryMonthTotals(
@@ -162,7 +170,11 @@ function buildCategoryMonthTotals(
   }
 
   for (const transaction of transactions) {
-    if (transaction.status !== 'approved' || !transaction.categoryId || toMonthKey(transaction.occurredAt) !== monthKey) {
+    if (
+      transaction.status !== 'approved' ||
+      !transaction.categoryId ||
+      toMonthKey(transaction.occurredAt) !== monthKey
+    ) {
       continue;
     }
 
@@ -214,13 +226,31 @@ function sumOverspending(categoryTotals: Map<string, CategoryMonthTotals>): numb
 }
 
 function deriveMoneyState(transactions: CanonicalTransaction[], assignableCashCents: number) {
+  const accountBalance = deriveAccountBalance(transactions);
+  const approvedLedgerCents = sumApprovedLedgerCents(transactions);
+
   return {
-    accountBalance: deriveAccountBalance(transactions),
+    accountBalance,
     assignableCash: {
       amountCents: assignableCashCents,
       derivedFrom: ASSIGNABLE_CASH_RULE,
     },
+    reconciliationGap: {
+      amountCents: accountBalance.amountCents - approvedLedgerCents,
+      approvedLedgerCents,
+      derivedFrom: RECONCILIATION_GAP_RULE,
+    },
   };
+}
+
+function sumApprovedLedgerCents(transactions: CanonicalTransaction[]) {
+  return transactions.reduce((total, transaction) => {
+    if (transaction.status !== 'approved') {
+      return total;
+    }
+
+    return total + transaction.amountCents;
+  }, 0);
 }
 
 function deriveAccountBalance(transactions: CanonicalTransaction[]) {
@@ -248,7 +278,10 @@ function isBalanceEvidenceTransaction(transaction: CanonicalTransaction) {
   return transaction.status !== 'ignored' && transaction.balanceAfterCents !== null;
 }
 
-function compareTransactionsByBalanceEvidenceOrder(left: CanonicalTransaction, right: CanonicalTransaction) {
+function compareTransactionsByBalanceEvidenceOrder(
+  left: CanonicalTransaction,
+  right: CanonicalTransaction
+) {
   const occurredComparison = left.occurredAt.localeCompare(right.occurredAt);
   if (occurredComparison !== 0) {
     return occurredComparison;
