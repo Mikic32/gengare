@@ -2,6 +2,7 @@ import { Text } from '@/components/ui/text';
 import { ScreenScroll } from '@/src/features/budget/app-components';
 import { useAppShell } from '@/src/features/budget/app-shell';
 import { BackupActions } from '@/src/features/budget/backup-actions';
+import { DebugResetActions } from '@/src/features/budget/debug-reset';
 import { router } from 'expo-router';
 import { View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -26,6 +27,14 @@ export default function SettingsScreen() {
             if (view) {
               router.replace('/');
             }
+          }}
+        />
+
+        <DebugResetActions
+          onReset={async () => {
+            setOnboarded(false);
+            await refreshInboxCount();
+            router.replace('/');
           }}
         />
       </ScreenScroll>

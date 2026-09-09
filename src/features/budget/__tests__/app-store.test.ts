@@ -6,6 +6,7 @@ import type {
   BudgetStore,
   DebugSmsImportInput,
   DebugSmsImportResult,
+  ResetLocalDataConfirmation,
   RestoreBackupConfirmation,
 } from '../store';
 import type {
@@ -192,6 +193,36 @@ describe('budget app store', () => {
 
     expect(store.createReconciliationAdjustment).toHaveBeenCalledTimes(1);
     expect(view).toBe(TEST_BUDGET_VIEW);
+  });
+
+  it('resets local data through one app-facing Module call and clears notifications', async () => {
+    const presenter = createMemoryNotificationPresenter();
+    presenter.clear = vi.fn();
+    const notifications = createActionableNotifications({
+      presenter,
+      debounceMs: 1_000,
+    });
+    const store = createBudgetStoreStub();
+    store.resetLocalData = vi.fn(async () => undefined);
+    store.getInboxTransactions = vi.fn(async () => []);
+    store.getImportOutcomes = vi.fn(async () => []);
+    const appStore = createBudgetAppStore(store, { notifications });
+
+    vi.useFakeTimers();
+    await appStore.importDebugSms(
+      {
+        sender: 'BANK',
+        body: 'Debug SMS',
+        receivedAt: '2026-07-07T12:00:00.000Z',
+      },
+      new Date('2026-07-07T12:00:00.000Z')
+    );
+    vi.advanceTimersByTime(1_000);
+
+    await appStore.resetLocalData({ confirmed: true });
+
+    expect(store.resetLocalData).toHaveBeenCalledWith({ confirmed: true });
+    expect(presenter.clear).toHaveBeenCalled();
   });
 
   it('derives a debounced notification summary from Inbox and budget after SMS import', async () => {
@@ -511,6 +542,9 @@ function createBudgetStoreStub(): BudgetStore {
         now?: Date
       ) => Promise<BudgetView | null>
     >(async () => TEST_BUDGET_VIEW),
+    resetLocalData: vi.fn<(confirmation: ResetLocalDataConfirmation) => Promise<void>>(
+      async () => undefined
+    ),
     importQueuedSms: vi.fn<(now?: Date) => Promise<DebugSmsImportResult[]>>(async () => [
       TEST_IMPORT_RESULT,
     ]),
