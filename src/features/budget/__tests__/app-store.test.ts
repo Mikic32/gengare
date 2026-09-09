@@ -77,6 +77,21 @@ describe('budget app store', () => {
     });
   });
 
+  it('returns refreshed inbox data after draining queued native SMS', async () => {
+    const store = createBudgetStoreStub();
+    const appStore = createBudgetAppStore(store);
+
+    const screenData = await appStore.drainQueuedSms(new Date('2026-07-07T12:00:00.000Z'));
+
+    expect(store.importQueuedSms).toHaveBeenCalledTimes(1);
+    expect(screenData).toEqual({
+      budgetView: TEST_BUDGET_VIEW,
+      needsReview: TEST_INBOX_TRANSACTIONS,
+      possibleDuplicates: [],
+      manualImportTasks: [],
+    });
+  });
+
   it('loads inbox screen data grouped into review, duplicate, and manual-import sections', async () => {
     const store = createBudgetStoreStub();
     store.getInboxTransactions = vi.fn(async () => [
@@ -330,5 +345,8 @@ function createBudgetStoreStub(): BudgetStore {
     importDebugSms: vi.fn<
       (input: DebugSmsImportInput, now?: Date) => Promise<DebugSmsImportResult>
     >(async () => TEST_IMPORT_RESULT),
+    importQueuedSms: vi.fn<(now?: Date) => Promise<DebugSmsImportResult[]>>(async () => [
+      TEST_IMPORT_RESULT,
+    ]),
   };
 }

@@ -1,7 +1,10 @@
 import * as React from 'react';
 
+import { AppState } from 'react-native';
+
 import { budgetAppStore } from '@/src/features/budget/app-store';
 import { countInboxItems } from '@/src/features/budget/app-helpers';
+import { requestNativeSmsPermission } from '@/src/features/budget/sms-permissions';
 
 type AppShellValue = {
   isOnboarded: boolean | null;
@@ -17,16 +20,31 @@ export function AppShellProvider({ children }: { children: React.ReactNode }) {
   const [inboxCount, setInboxCount] = React.useState(0);
 
   const refreshInboxCount = React.useCallback(async () => {
-    const screenData = await budgetAppStore.loadInboxScreenData(new Date());
+    const screenData = await budgetAppStore.drainQueuedSms(new Date());
     setOnboarded(screenData.budgetView !== null);
     setInboxCount(countInboxItems(screenData));
   }, []);
 
   React.useEffect(() => {
-    void refreshInboxCount().catch(() => {
+    void (async () => {
+      await requestNativeSmsPermission();
+      await refreshInboxCount();
+    })().catch(() => {
       setOnboarded(false);
       setInboxCount(0);
     });
+  }, [refreshInboxCount]);
+
+  React.useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') {
+        return;
+      }
+
+      void refreshInboxCount().catch(() => undefined);
+    });
+
+    return () => subscription.remove();
   }, [refreshInboxCount]);
 
   const value = React.useMemo(

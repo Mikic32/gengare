@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { deriveBudgetView } from '../budget-engine';
+import { createMemoryNativeSmsQueue } from '../native-sms-queue';
 import { createSampleDebugSmsBody } from '../sms-import';
 import { createMemoryBudgetStorage, createBudgetStore, type BudgetStorage } from '../store';
 
@@ -410,6 +411,87 @@ describe('budget store bootstrap', () => {
       candidateTransactionId: inboxTransactions[0].id,
       reason: 'parsed_ok',
     });
+  });
+
+  it('drains queued native SMS into the existing import pipeline', async () => {
+    const smsQueue = createMemoryNativeSmsQueue();
+    smsQueue.receive({
+      sender: 'BANK',
+      body: [
+        'Datum: 30.06.2026, Vreme: 03:24:04',
+        'Tekuci racun: 93005***84',
+        'Odliv: 1.568,80 RSD',
+        'Raspoloziva sredstva: 4.527,55 RSD',
+        'Vasa OTP banka',
+      ].join('\n'),
+      receivedAt: '2026-06-25T10:31:00.000Z',
+    });
+    smsQueue.receive({
+      sender: 'SPAMMER',
+      body: 'Ignore me',
+      receivedAt: '2026-06-25T10:32:00.000Z',
+    });
+
+    const store = createBudgetStore(createMemoryBudgetStorage(), smsQueue);
+
+    await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [
+          {
+            name: 'Essentials',
+            categories: ['Groceries'],
+          },
+        ],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    const importResults = await store.importQueuedSms(new Date('2026-06-25T10:33:00.000Z'));
+    const expectedOccurredAt = new Date(2026, 5, 30, 3, 24, 4, 0).toISOString();
+
+    expect(importResults).toHaveLength(1);
+    expect(importResults[0].importOutcome).toMatchObject({
+      kind: 'needs_review',
+      reason: 'parsed_ok',
+    });
+    expect(importResults[0].transaction).toMatchObject({
+      source: 'sms',
+      status: 'needs_review',
+      amountCents: -156_880,
+      occurredAt: expectedOccurredAt,
+    });
+    expectAccountBalance(importResults[0].budgetView, 452_755);
+
+    const inboxTransactions = await store.getInboxTransactions();
+    expect(inboxTransactions).toHaveLength(1);
+    expect(inboxTransactions[0].id).toBe(importResults[0].transaction?.id);
+
+    expect(await smsQueue.drain()).toEqual([]);
+    expect(await store.importQueuedSms(new Date('2026-06-25T10:34:00.000Z'))).toEqual([]);
+  });
+
+  it('leaves queued native SMS in place until onboarding exists', async () => {
+    const smsQueue = createMemoryNativeSmsQueue();
+    const payload = {
+      sender: 'BANK',
+      body: [
+        'Datum: 30.06.2026, Vreme: 03:24:04',
+        'Tekuci racun: 93005***84',
+        'Odliv: 1.568,80 RSD',
+        'Raspoloziva sredstva: 4.527,55 RSD',
+        'Vasa OTP banka',
+      ].join('\n'),
+      receivedAt: '2026-06-25T10:31:00.000Z',
+    };
+    smsQueue.receive(payload);
+
+    const store = createBudgetStore(createMemoryBudgetStorage(), smsQueue);
+
+    expect(await store.importQueuedSms(new Date('2026-06-25T10:33:00.000Z'))).toEqual([]);
+    expect(await smsQueue.drain()).toEqual([payload]);
   });
 
   it('imports the in-app sample SMS as a review candidate after current onboarding', async () => {

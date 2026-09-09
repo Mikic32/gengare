@@ -69,6 +69,7 @@ export type BudgetAppStore = {
   ): Promise<InboxScreenData>;
   recoverUnparseableSms(input: RecoverUnparseableSmsInput, now?: Date): Promise<InboxScreenData>;
   ignoreUnparseableSms(input: IgnoreUnparseableSmsInput, now?: Date): Promise<InboxScreenData>;
+  drainQueuedSms(now?: Date): Promise<InboxScreenData>;
 };
 
 export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
@@ -169,6 +170,13 @@ export function createBudgetAppStore(store: BudgetStore): BudgetAppStore {
 
     async ignoreUnparseableSms(input, now = new Date()) {
       const budgetView = await store.ignoreUnparseableSms(input, now);
+      return hydrateInboxScreenData(budgetView);
+    },
+
+    async drainQueuedSms(now = new Date()) {
+      const importResults = await store.importQueuedSms(now);
+      const budgetView =
+        importResults.at(-1)?.budgetView ?? (await store.getCurrentBudgetView(now));
       return hydrateInboxScreenData(budgetView);
     },
   };
