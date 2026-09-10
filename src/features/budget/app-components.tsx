@@ -71,23 +71,32 @@ export function FormField({
   );
 }
 
-export function ScreenScroll({ children }: { children: React.ReactNode }) {
+export const ScreenScroll = React.forwardRef<
+  ScrollView,
+  {
+    children: React.ReactNode;
+    onScroll?: React.ComponentProps<typeof ScrollView>['onScroll'];
+  }
+>(function ScreenScroll({ children, onScroll }, ref) {
   return (
     <KeyboardAvoidingView
       className="flex-1"
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView
+        ref={ref}
         className="flex-1"
         contentContainerStyle={{ flexGrow: 1, paddingBottom: 48 }}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag">
+        keyboardDismissMode="on-drag"
+        onScroll={onScroll}
+        scrollEventThrottle={onScroll ? 16 : undefined}>
         <View className="gap-5" style={{ paddingHorizontal: 24, paddingTop: 20, paddingBottom: 8 }}>
           {children}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
-}
+});
 
 export function SelectChip({
   label,

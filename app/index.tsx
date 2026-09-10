@@ -40,7 +40,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import * as React from 'react';
-import { Alert, Pressable, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const READY_SOURCE_ID = 'ready';
@@ -212,8 +212,12 @@ function BudgetScreen({
   const { inboxCount } = useAppShell();
   const [assignmentDrafts, setAssignmentDrafts] = React.useState<Record<string, string>>({});
   const [expandedCategoryId, setExpandedCategoryId] = React.useState<string | null>(null);
+  const [pendingFocusId, setPendingFocusId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [isUpdatingBudget, setIsUpdatingBudget] = React.useState(false);
+  const scrollRef = React.useRef<ScrollView>(null);
+  const scrollOffsetRef = React.useRef(0);
+  const rowRefs = React.useRef(new Map<string, View>());
 
   const readyToAssignCents = budgetView.moneyState.assignableCash.amountCents;
   const reconciliationGapCents = budgetView.moneyState.reconciliationGap.amountCents;
@@ -320,8 +324,74 @@ function BudgetScreen({
 
   const gapAmount = formatCurrency(Math.abs(reconciliationGapCents), budgetView.currencyCode);
 
+  function setRowRef(categoryId: string, node: View | null) {
+    if (node) {
+      rowRefs.current.set(categoryId, node);
+    } else {
+      rowRefs.current.delete(categoryId);
+    }
+  }
+
+  function focusEnvelope(categoryId: string) {
+    setExpandedCategoryId(categoryId);
+    setPendingFocusId(categoryId);
+  }
+
+  function focusOverspentEnvelope() {
+    const firstOverspentId = overspentCategories[0]?.id;
+    if (!firstOverspentId) {
+      return;
+    }
+
+    focusEnvelope(firstOverspentId);
+  }
+
+  function scrollEnvelopeIntoView(categoryId: string) {
+    const row = rowRefs.current.get(categoryId);
+    const scroll = scrollRef.current;
+    if (!row || !scroll) {
+      return;
+    }
+
+    row.measureInWindow((_x, rowY) => {
+      scroll.measureInWindow((_sx, scrollY) => {
+        scroll.scrollTo({
+          y: Math.max(0, scrollOffsetRef.current + (rowY - scrollY) - 16),
+          animated: true,
+        });
+      });
+    });
+  }
+
+  React.useLayoutEffect(() => {
+    if (!pendingFocusId || pendingFocusId !== expandedCategoryId) {
+      return;
+    }
+
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) {
+          return;
+        }
+
+        scrollEnvelopeIntoView(pendingFocusId);
+        setPendingFocusId(null);
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [pendingFocusId, expandedCategoryId]);
+
   return (
-    <ScreenScroll>
+    <ScreenScroll
+      ref={scrollRef}
+      onScroll={(event) => {
+        scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+      }}>
       <View className="gap-1 pr-14">
         <Text className="text-sm text-muted-foreground">{budgetView.accountName}</Text>
         <Text variant="h3">{formatMonthLabel(budgetView.monthKey)}</Text>
@@ -376,8 +446,9 @@ function BudgetScreen({
 
       {overspentCategories.length > 0 ? (
         <Pressable
-          className="gap-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-4"
-          onPress={() => setExpandedCategoryId(overspentCategories[0].id)}>
+          accessibilityRole="button"
+          className="gap-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 active:bg-destructive/20"
+          onPress={focusOverspentEnvelope}>
           <Text className="font-medium text-destructive">
             {overspentCategories.length === 1
               ? `${overspentCategories[0].name} is overspent`
@@ -413,6 +484,7 @@ function BudgetScreen({
               <CategoryRow
                 key={category.id}
                 category={category}
+                containerRef={(node) => setRowRef(category.id, node)}
                 currencyCode={budgetView.currencyCode}
                 isExpanded={expandedCategoryId === category.id}
                 isLast={categoryIndex === group.categories.length - 1}
@@ -538,6 +610,7 @@ function ReadyToAssignCard({
 
 function CategoryRow({
   category,
+  containerRef,
   currencyCode,
   isExpanded,
   isLast,
@@ -552,6 +625,7 @@ function CategoryRow({
   onMoveFrom,
 }: {
   category: BudgetCategoryView;
+  containerRef?: React.Ref<View>;
   currencyCode: string;
   isExpanded: boolean;
   isLast: boolean;
@@ -602,7 +676,10 @@ function CategoryRow({
   }
 
   return (
-    <View className={isLast ? undefined : 'border-b border-border'}>
+    <View
+      ref={containerRef}
+      collapsable={false}
+      className={isLast ? undefined : 'border-b border-border'}>
       <Pressable
         className="gap-1 px-5 py-4 active:bg-muted/40"
         delayLongPress={400}
