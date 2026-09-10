@@ -2,6 +2,7 @@ import '@/global.css';
 
 import { NAV_THEME, readStoredColorScheme, usePalette } from '@/lib/theme';
 import { AppShellProvider, useAppShell } from '@/src/features/budget/app-shell';
+import { resolveAppTabBarStyle } from '@/src/features/budget/app-tabs';
 import { ThemeProvider } from '@react-navigation/native';
 import { PortalHost } from '@rn-primitives/portal';
 import { Tabs } from 'expo-router';
@@ -39,7 +40,6 @@ export default function RootLayout() {
 function AppTabs() {
   const { inboxCount, isOnboarded } = useAppShell();
   const palette = usePalette();
-  const showTabs = isOnboarded === true;
 
   return (
     <Tabs
@@ -48,12 +48,7 @@ function AppTabs() {
         tabBarActiveTintColor: palette.primary,
         tabBarInactiveTintColor: palette.mutedForeground,
         tabBarLabelStyle: { fontWeight: '600' },
-        tabBarStyle: showTabs
-          ? {
-              backgroundColor: palette.card,
-              borderTopColor: palette.border,
-            }
-          : { display: 'none' },
+        tabBarStyle: resolveAppTabBarStyle(isOnboarded, palette),
       }}>
       <Tabs.Screen
         name="index"

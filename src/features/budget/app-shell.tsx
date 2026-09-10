@@ -27,12 +27,20 @@ export function AppShellProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     void (async () => {
-      await requestNativeSmsPermission();
-      await refreshInboxCount();
-    })().catch(() => {
-      setOnboarded(false);
-      setInboxCount(0);
-    });
+      try {
+        const budgetView = await budgetAppStore.getBudgetView(new Date());
+        setOnboarded(budgetView !== null);
+      } catch {
+        // Don't mark the user as not onboarded just because the first read failed.
+      }
+
+      try {
+        await requestNativeSmsPermission();
+        await refreshInboxCount();
+      } catch {
+        setInboxCount(0);
+      }
+    })();
   }, [refreshInboxCount]);
 
   React.useEffect(() => {
