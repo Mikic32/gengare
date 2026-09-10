@@ -563,7 +563,14 @@ function createAssignmentEventId(snapshot: BudgetSnapshot, offset = 1) {
 }
 
 function createTransactionId(snapshot: BudgetSnapshot) {
-  return `transaction-${snapshot.transactions.length + 1}`;
+  const existingIds = new Set(snapshot.transactions.map((transaction) => transaction.id));
+  let sequence = snapshot.transactions.length + 1;
+
+  while (existingIds.has(`transaction-${sequence}`)) {
+    sequence += 1;
+  }
+
+  return `transaction-${sequence}`;
 }
 
 function createRawSmsMessageId(snapshot: BudgetSnapshot) {

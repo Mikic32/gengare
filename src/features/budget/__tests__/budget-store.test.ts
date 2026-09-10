@@ -597,6 +597,46 @@ describe('budget store bootstrap', () => {
     expect(await store.importQueuedSms(new Date('2026-09-09T17:41:00.000Z'))).toEqual([]);
   });
 
+  it('allocates an unused transaction id when persisted ids have a gap', async () => {
+    const bootstrapStorage = createMemoryBudgetStorage();
+    const bootstrapStore = createBudgetStore(bootstrapStorage);
+
+    await bootstrapStore.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [{ name: 'Essentials', categories: ['Groceries'] }],
+      },
+      new Date('2026-09-08T10:00:00.000Z')
+    );
+
+    const snapshot = await bootstrapStorage.readSnapshot();
+    const startingBalance = snapshot.transactions[0];
+    snapshot.transactions = Array.from({ length: 12 }, (_, index) => ({
+      ...startingBalance,
+      id: `transaction-${index + 2}`,
+    }));
+
+    const store = createBudgetStore(createMemoryBudgetStorage(snapshot));
+    const result = await store.importDebugSms(
+      {
+        sender: 'OTP_Info',
+        body: [
+          'Datum: 09.09.2026, Vreme: 19:39:19',
+          'Tekuci racun: 93005***84',
+          'Odliv: 735,70 RSD',
+          'Raspoloziva sredstva: 95.832,59 RSD',
+          'Vasa OTP banka',
+        ].join('\n'),
+        receivedAt: '2026-09-09T17:39:19.000Z',
+      },
+      new Date('2026-09-09T17:40:00.000Z')
+    );
+
+    expect(result.transaction?.id).toBe('transaction-14');
+  });
+
   it('imports the in-app sample SMS as a review candidate after current onboarding', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
     const onboardedAt = new Date('2026-08-26T14:00:00.000Z');
