@@ -1,4 +1,5 @@
 import { deriveBudgetView } from './budget-engine';
+import { createTransactionId } from './transaction-ids';
 import type { BudgetSnapshot } from './types';
 
 export function applyCreateReconciliationAdjustment(
@@ -32,10 +33,6 @@ export function applyCreateReconciliationAdjustment(
     ...snapshot,
     transactions: [...snapshot.transactions, nextTransaction],
   };
-}
-
-function createTransactionId(snapshot: BudgetSnapshot) {
-  return `transaction-${snapshot.transactions.length + 1}`;
 }
 
 function assertBudgetExists(

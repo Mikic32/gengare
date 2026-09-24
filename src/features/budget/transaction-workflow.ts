@@ -1,5 +1,6 @@
 import { hasPossibleDuplicate } from './import-orchestration';
 import { normalizeManualTransactionInput } from './manual-transactions';
+import { createTransactionId } from './transaction-ids';
 import type {
   BudgetSnapshot,
   ReviewableImportOutcomeKind,
@@ -216,10 +217,6 @@ function normalizeBalanceAfterCents(balanceAfterCents: number | null) {
   }
 
   return balanceAfterCents;
-}
-
-function createTransactionId(snapshot: BudgetSnapshot) {
-  return `transaction-${snapshot.transactions.length + 1}`;
 }
 
 function getUnresolvedUnparseableImport(snapshot: BudgetSnapshot, importOutcomeId: string) {

@@ -364,6 +364,47 @@ describe('budget store bootstrap', () => {
     expect(reloadedView).toEqual(reconciledView);
   });
 
+  it('reconciles after transaction count reaches the starting balance id', async () => {
+    const store = createBudgetStore(createMemoryBudgetStorage());
+    const onboarded = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 125_500,
+        categoryGroups: [{ name: 'Essentials', categories: ['Groceries'] }],
+      },
+      new Date('2026-06-24T10:00:00.000Z')
+    );
+
+    for (const day of [25, 26]) {
+      await store.createManualTransaction(
+        {
+          kind: 'outflow',
+          amountCents: 1_000,
+          occurredAt: `2026-06-${day}T09:00:00.000Z`,
+          categoryId: onboarded.categoryGroups[0].categories[0].id,
+          payee: 'Market',
+          memo: null,
+        },
+        new Date(`2026-06-${day}T09:00:00.000Z`)
+      );
+    }
+
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const reconciled = await store.createReconciliationAdjustment(now);
+
+    expectReconciliationGap(reconciled, 0, 125_500);
+    expect(await store.getTransactions()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'reconciliation',
+          amountCents: 2_000,
+          status: 'approved',
+        }),
+      ])
+    );
+  });
+
   it('imports a debug SMS as a needs-review candidate and updates account balance before approval', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
 

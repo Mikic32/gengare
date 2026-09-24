@@ -1,3 +1,4 @@
+import { createTransactionId } from './transaction-ids';
 import type { BudgetSnapshot, ManualTransactionInput, UpdateManualTransactionInput } from './types';
 
 export function applyCreateManualTransaction(
@@ -145,8 +146,4 @@ function assertEditableManualTransaction(transaction: BudgetSnapshot['transactio
   if (transaction.source !== 'manual' || transaction.status !== 'approved') {
     throw new Error('Only approved manual transactions can be edited.');
   }
-}
-
-function createTransactionId(snapshot: BudgetSnapshot) {
-  return `transaction-${snapshot.transactions.length + 1}`;
 }

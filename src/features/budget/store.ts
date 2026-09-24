@@ -13,6 +13,7 @@ import { applyCompleteOnboarding } from './onboarding';
 import { applyCreateReconciliationAdjustment } from './reconciliation';
 import { deriveMonthlyReport } from './reports';
 import { applyTransactionWorkflow } from './transaction-workflow';
+import { createTransactionId } from './transaction-ids';
 import type {
   ApproveImportedTransactionInput,
   AssignmentEvent,
@@ -560,17 +561,6 @@ function assertCategoryHasAvailableBalance(
 
 function createAssignmentEventId(snapshot: BudgetSnapshot, offset = 1) {
   return `assignment-${snapshot.assignmentEvents.length + offset}`;
-}
-
-function createTransactionId(snapshot: BudgetSnapshot) {
-  const existingIds = new Set(snapshot.transactions.map((transaction) => transaction.id));
-  let sequence = snapshot.transactions.length + 1;
-
-  while (existingIds.has(`transaction-${sequence}`)) {
-    sequence += 1;
-  }
-
-  return `transaction-${sequence}`;
 }
 
 function createRawSmsMessageId(snapshot: BudgetSnapshot) {
