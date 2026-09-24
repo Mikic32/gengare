@@ -345,7 +345,7 @@ export function ProgressBar({
   value: number;
   tone?: 'primary' | 'destructive';
 }) {
-  const width = `${Math.round(Math.min(Math.max(value, 0), 1) * 100)}%`;
+  const width: `${number}%` = `${Math.round(Math.min(Math.max(value, 0), 1) * 100)}%`;
 
   return (
     <View className="h-1.5 overflow-hidden rounded-full bg-muted">

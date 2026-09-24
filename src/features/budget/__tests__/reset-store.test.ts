@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { createMemoryNativeSmsQueue } from '../native-sms-queue';
 import { createBudgetStore, createMemoryBudgetStorage } from '../store';
+import type { CompleteOnboardingInput } from '../types';
 
-const ONBOARDING_INPUT = {
+const ONBOARDING_INPUT: CompleteOnboardingInput = {
   accountName: 'Main account',
   currencyCode: 'RSD',
   startingBalanceCents: 125_500,
@@ -13,7 +14,7 @@ const ONBOARDING_INPUT = {
       categories: ['Groceries'],
     },
   ],
-} as const;
+};
 
 describe('budget store reset', () => {
   it('wipes persisted facts and discards queued SMS', async () => {

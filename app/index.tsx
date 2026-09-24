@@ -353,8 +353,13 @@ function BudgetScreen({
       return;
     }
 
+    const nativeScroll = scroll.getNativeScrollRef();
+    if (!nativeScroll) {
+      return;
+    }
+
     row.measureInWindow((_x, rowY) => {
-      scroll.measureInWindow((_sx, scrollY) => {
+      nativeScroll.measureInWindow((_sx, scrollY) => {
         scroll.scrollTo({
           y: Math.max(0, scrollOffsetRef.current + (rowY - scrollY) - 16),
           animated: true,
