@@ -47,6 +47,9 @@ export type InboxScreenData = {
   needsReview: CanonicalTransaction[];
   possibleDuplicates: CanonicalTransaction[];
   manualImportTasks: ManualImportTask[];
+  approved: CanonicalTransaction[];
+  ignored: CanonicalTransaction[];
+  ignoredMessages: ManualImportTask[];
 };
 
 export type BudgetAppStore = {
@@ -111,16 +114,19 @@ export function createBudgetAppStore(
   }
 
   async function hydrateInboxScreenData(budgetView: BudgetView | null): Promise<InboxScreenData> {
-    const [inboxTransactions, importOutcomes, rawSmsMessages, smsParseResults] = await Promise.all([
-      store.getInboxTransactions(),
-      store.getImportOutcomes(),
-      store.getRawSmsMessages(),
-      store.getSmsParseResults(),
-    ]);
+    const [inboxTransactions, transactions, importOutcomes, rawSmsMessages, smsParseResults] =
+      await Promise.all([
+        store.getInboxTransactions(),
+        store.getTransactions(),
+        store.getImportOutcomes(),
+        store.getRawSmsMessages(),
+        store.getSmsParseResults(),
+      ]);
 
     return assembleInboxScreenData({
       budgetView,
       inboxTransactions,
+      transactions,
       importOutcomes,
       rawSmsMessages,
       smsParseResults,
@@ -279,6 +285,7 @@ export function createBudgetAppStore(
 function assembleInboxScreenData(input: {
   budgetView: BudgetView | null;
   inboxTransactions: CanonicalTransaction[];
+  transactions: CanonicalTransaction[];
   importOutcomes: ImportOutcome[];
   rawSmsMessages: RawSmsMessage[];
   smsParseResults: SmsParseResult[];
@@ -299,6 +306,27 @@ function assembleInboxScreenData(input: {
     possibleDuplicates: input.inboxTransactions.filter(
       (transaction) => outcomeByTransactionId.get(transaction.id)?.kind === 'possible_duplicate'
     ),
+    approved: input.transactions.filter(
+      (transaction) => transaction.source === 'sms' && transaction.status === 'approved'
+    ),
+    ignored: input.transactions.filter(
+      (transaction) => transaction.source === 'sms' && transaction.status === 'ignored'
+    ),
+    ignoredMessages: input.importOutcomes
+      .filter((outcome) => outcome.kind === 'ignored' && outcome.candidateTransactionId === null)
+      .flatMap((outcome) => {
+        const rawSmsMessage = rawSmsById.get(outcome.rawSmsMessageId);
+        if (!rawSmsMessage) return [];
+        return [
+          {
+            importOutcome: outcome,
+            rawSmsMessage,
+            parseResult: outcome.parseResultId
+              ? (parseResultById.get(outcome.parseResultId) ?? null)
+              : null,
+          },
+        ];
+      }),
     manualImportTasks: input.importOutcomes
       .filter(
         (outcome) => outcome.kind === 'manual_import' && outcome.candidateTransactionId === null

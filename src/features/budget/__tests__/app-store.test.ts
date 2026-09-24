@@ -105,6 +105,9 @@ describe('budget app store', () => {
       needsReview: TEST_INBOX_TRANSACTIONS,
       possibleDuplicates: [],
       manualImportTasks: [],
+      approved: [],
+      ignored: [],
+      ignoredMessages: [],
     });
   });
 
@@ -120,6 +123,9 @@ describe('budget app store', () => {
       needsReview: TEST_INBOX_TRANSACTIONS,
       possibleDuplicates: [],
       manualImportTasks: [],
+      approved: [],
+      ignored: [],
+      ignoredMessages: [],
     });
   });
 
@@ -151,7 +157,39 @@ describe('budget app store', () => {
           parseResult: TEST_UNPARSEABLE_PARSE_RESULT,
         },
       ],
+      approved: [],
+      ignored: [],
+      ignoredMessages: [],
     });
+  });
+
+  it('shows resolved SMS imports while excluding manual transactions from inbox history', async () => {
+    const store = createBudgetStoreStub();
+    const approved = { ...TEST_INBOX_TRANSACTIONS[0], status: 'approved' as const };
+    const ignored = { ...TEST_DUPLICATE_TRANSACTION, status: 'ignored' as const };
+    const ignoredOutcome = {
+      ...TEST_MANUAL_IMPORT_OUTCOME,
+      kind: 'ignored' as const,
+    };
+    store.getInboxTransactions = vi.fn(async () => []);
+    store.getTransactions = vi.fn(async () => [TEST_TRANSACTIONS[0], approved, ignored]);
+    store.getImportOutcomes = vi.fn(async () => [ignoredOutcome]);
+    store.getRawSmsMessages = vi.fn(async () => [TEST_UNPARSEABLE_RAW_SMS]);
+    store.getSmsParseResults = vi.fn(async () => [TEST_UNPARSEABLE_PARSE_RESULT]);
+
+    const screenData = await createBudgetAppStore(store).loadInboxScreenData();
+
+    expect(screenData.approved).toEqual([approved]);
+    expect(screenData.ignored).toEqual([ignored]);
+    expect(screenData.ignoredMessages).toEqual([
+      {
+        importOutcome: ignoredOutcome,
+        rawSmsMessage: TEST_UNPARSEABLE_RAW_SMS,
+        parseResult: TEST_UNPARSEABLE_PARSE_RESULT,
+      },
+    ]);
+    expect(screenData.needsReview).toEqual([]);
+    expect(screenData.manualImportTasks).toEqual([]);
   });
 
   it('rehydrates inbox screen data after recovering an unparseable SMS', async () => {

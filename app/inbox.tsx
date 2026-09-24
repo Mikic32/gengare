@@ -2,7 +2,6 @@ import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
 import {
   CategoryChips,
-  CollapsibleCard,
   DateQuickField,
   EmptyState,
   ErrorBanner,
@@ -14,7 +13,6 @@ import {
 } from '@/src/features/budget/app-components';
 import {
   countInboxItems,
-  createSampleDebugSmsBody,
   formatImportOutcomeReason,
   formatShortDate,
   getErrorMessage,
@@ -54,14 +52,11 @@ type RecoveryDraft = {
 export default function InboxScreen() {
   const { refreshInboxCount } = useAppShell();
   const [screenData, setScreenData] = React.useState<InboxScreenData | null>(null);
-  const [debugSmsSender, setDebugSmsSender] = React.useState('OTP_Info');
-  const [debugSmsBody, setDebugSmsBody] = React.useState(createSampleDebugSmsBody);
+  const [activeTab, setActiveTab] = React.useState<'review' | 'approved' | 'ignored'>('review');
   const [isLoading, setIsLoading] = React.useState(true);
-  const [isImportingSms, setIsImportingSms] = React.useState(false);
   const [reviewingTransactionId, setReviewingTransactionId] = React.useState<string | null>(null);
   const [recoveringOutcomeId, setRecoveringOutcomeId] = React.useState<string | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
-  const [smsImportError, setSmsImportError] = React.useState<string | null>(null);
   const [reviewError, setReviewError] = React.useState<string | null>(null);
   const [reviewCategoryIds, setReviewCategoryIds] = React.useState<Record<string, string | null>>(
     {}
@@ -72,6 +67,9 @@ export default function InboxScreen() {
   const needsReview = screenData?.needsReview ?? [];
   const possibleDuplicates = screenData?.possibleDuplicates ?? [];
   const manualImportTasks = screenData?.manualImportTasks ?? [];
+  const approved = screenData?.approved ?? [];
+  const ignored = screenData?.ignored ?? [];
+  const ignoredMessages = screenData?.ignoredMessages ?? [];
   const inboxCount = screenData ? countInboxItems(screenData) : 0;
   const spendingToReview = needsReview.filter((transaction) => transaction.kind === 'outflow');
   const incomeToReview = needsReview.filter((transaction) => transaction.kind === 'inflow');
@@ -120,51 +118,9 @@ export default function InboxScreen() {
     await refreshInboxCount();
   }
 
-  async function handleImportDebugSms() {
-    setIsImportingSms(true);
-    setSmsImportError(null);
-    setReviewError(null);
-
-    try {
-      const { importResult, screenData: nextScreenData } = await budgetAppStore.importDebugSms(
-        {
-          sender: debugSmsSender,
-          body: debugSmsBody,
-          receivedAt: new Date().toISOString(),
-        },
-        new Date()
-      );
-      await applyInboxUpdate(nextScreenData);
-
-      if (importResult.importOutcome.kind === 'ignored') {
-        setSmsImportError(
-          importResult.importOutcome.reason === 'sender_not_allowed'
-            ? 'That sender isn’t your bank, so it was ignored.'
-            : 'This is from before you started tracking, so it was ignored.'
-        );
-        return;
-      }
-
-      if (importResult.importOutcome.kind === 'manual_import') {
-        setSmsImportError(
-          importResult.parseResult?.memo ?? 'Saved the SMS, but it needs a manual entry.'
-        );
-      }
-
-      setDebugSmsBody(createSampleDebugSmsBody());
-    } catch (error) {
-      const message = getErrorMessage(error);
-      setSmsImportError(message);
-      Alert.alert('Could not import SMS', message);
-    } finally {
-      setIsImportingSms(false);
-    }
-  }
-
   async function handleApproveImportedTransaction(transaction: CanonicalTransaction) {
     setReviewingTransactionId(transaction.id);
     setReviewError(null);
-    setSmsImportError(null);
 
     try {
       const categoryId =
@@ -195,7 +151,6 @@ export default function InboxScreen() {
   async function handleIgnoreImportedTransaction(transaction: CanonicalTransaction) {
     setReviewingTransactionId(transaction.id);
     setReviewError(null);
-    setSmsImportError(null);
 
     try {
       await applyInboxUpdate(
@@ -223,7 +178,6 @@ export default function InboxScreen() {
   async function handleRecoverUnparseableSms(task: ManualImportTask) {
     setRecoveringOutcomeId(task.importOutcome.id);
     setReviewError(null);
-    setSmsImportError(null);
 
     try {
       const draft = getRecoveryDraft(task, recoveryDrafts);
@@ -262,7 +216,6 @@ export default function InboxScreen() {
   async function handleIgnoreUnparseableSms(task: ManualImportTask) {
     setRecoveringOutcomeId(task.importOutcome.id);
     setReviewError(null);
-    setSmsImportError(null);
 
     try {
       await applyInboxUpdate(
@@ -329,139 +282,200 @@ export default function InboxScreen() {
           <Text variant="h3">Inbox</Text>
           <Text className="text-muted-foreground">
             {inboxCount === 0
-              ? 'Caught up. New bank SMS lands here before it hits the budget.'
+              ? 'Caught up. New bank messages will appear in To review.'
               : inboxCount === 1
                 ? '1 item to handle.'
                 : `${inboxCount} items to handle.`}
           </Text>
         </View>
 
-        {reviewError ? <ErrorBanner message={reviewError} /> : null}
+        <View className="flex-row gap-2" accessibilityRole="tablist">
+          {(
+            [
+              { id: 'review', label: 'To review', count: inboxCount },
+              { id: 'approved', label: 'Approved', count: approved.length },
+              { id: 'ignored', label: 'Ignored', count: ignored.length + ignoredMessages.length },
+            ] as const
+          ).map((tab) => (
+            <Pressable
+              key={tab.id}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: activeTab === tab.id }}
+              onPress={() => setActiveTab(tab.id)}
+              className={
+                activeTab === tab.id
+                  ? 'flex-1 items-center rounded-xl bg-primary px-2 py-3'
+                  : 'flex-1 items-center rounded-xl bg-muted px-2 py-3'
+              }>
+              <Text
+                className={
+                  activeTab === tab.id
+                    ? 'text-center text-sm font-semibold text-primary-foreground'
+                    : 'text-center text-sm font-medium text-muted-foreground'
+                }>
+                {tab.label} ({tab.count})
+              </Text>
+            </Pressable>
+          ))}
+        </View>
 
-        {spendingToReview.length > 0 ? (
-          <InboxSection title="Spending — pick an envelope">
-            {spendingToReview.map((transaction) => (
-              <ReviewTransactionCard
+        {activeTab === 'review' ? (
+          <>
+            {reviewError ? <ErrorBanner message={reviewError} /> : null}
+            {inboxCount === 0 ? (
+              <EmptyState title="All caught up" message="New bank messages will appear here." />
+            ) : null}
+
+            {spendingToReview.length > 0 ? (
+              <InboxSection title="Spending — pick an envelope">
+                {spendingToReview.map((transaction) => (
+                  <ReviewTransactionCard
+                    key={transaction.id}
+                    transaction={transaction}
+                    budgetView={budgetView}
+                    helperText="This isn’t in the budget until you approve it."
+                    categoryOptions={categoryOptions}
+                    selectedCategoryId={reviewCategoryIds[transaction.id] ?? null}
+                    isSubmitting={reviewingTransactionId === transaction.id}
+                    ignoreIsPrimary={false}
+                    onSelectCategory={(categoryId) =>
+                      setReviewCategoryIds((current) => ({
+                        ...current,
+                        [transaction.id]: categoryId,
+                      }))
+                    }
+                    onApprove={() => void handleApproveImportedTransaction(transaction)}
+                    onIgnore={() => void handleIgnoreImportedTransaction(transaction)}
+                  />
+                ))}
+              </InboxSection>
+            ) : null}
+
+            {incomeToReview.length > 0 ? (
+              <InboxSection title="Income — add to Ready to Assign">
+                {incomeToReview.map((transaction) => (
+                  <ReviewTransactionCard
+                    key={transaction.id}
+                    transaction={transaction}
+                    budgetView={budgetView}
+                    helperText="Approve and it becomes cash you can assign."
+                    categoryOptions={categoryOptions}
+                    selectedCategoryId={reviewCategoryIds[transaction.id] ?? null}
+                    isSubmitting={reviewingTransactionId === transaction.id}
+                    ignoreIsPrimary={false}
+                    onSelectCategory={(categoryId) =>
+                      setReviewCategoryIds((current) => ({
+                        ...current,
+                        [transaction.id]: categoryId,
+                      }))
+                    }
+                    onApprove={() => void handleApproveImportedTransaction(transaction)}
+                    onIgnore={() => void handleIgnoreImportedTransaction(transaction)}
+                  />
+                ))}
+              </InboxSection>
+            ) : null}
+
+            {possibleDuplicates.length > 0 ? (
+              <InboxSection title="Looks like a duplicate">
+                {possibleDuplicates.map((transaction) => (
+                  <ReviewTransactionCard
+                    key={transaction.id}
+                    transaction={transaction}
+                    budgetView={budgetView}
+                    helperText="Ignore it if you already have this. Approve if it’s actually new."
+                    categoryOptions={categoryOptions}
+                    selectedCategoryId={reviewCategoryIds[transaction.id] ?? null}
+                    isSubmitting={reviewingTransactionId === transaction.id}
+                    ignoreIsPrimary
+                    onSelectCategory={(categoryId) =>
+                      setReviewCategoryIds((current) => ({
+                        ...current,
+                        [transaction.id]: categoryId,
+                      }))
+                    }
+                    onApprove={() => void handleApproveImportedTransaction(transaction)}
+                    onIgnore={() => void handleIgnoreImportedTransaction(transaction)}
+                  />
+                ))}
+              </InboxSection>
+            ) : null}
+
+            {manualImportTasks.length > 0 ? (
+              <InboxSection title="Couldn’t read these">
+                {manualImportTasks.map((task) => {
+                  const draft = getRecoveryDraft(task, recoveryDrafts);
+
+                  return (
+                    <ManualImportCard
+                      key={task.importOutcome.id}
+                      task={task}
+                      draft={draft}
+                      categoryOptions={categoryOptions}
+                      isSubmitting={recoveringOutcomeId === task.importOutcome.id}
+                      onDraftChange={(nextDraft) =>
+                        setRecoveryDrafts((current) => ({
+                          ...current,
+                          [task.importOutcome.id]: nextDraft,
+                        }))
+                      }
+                      onRecover={() => void handleRecoverUnparseableSms(task)}
+                      onIgnore={() => void handleIgnoreUnparseableSms(task)}
+                    />
+                  );
+                })}
+              </InboxSection>
+            ) : null}
+          </>
+        ) : null}
+
+        {activeTab === 'approved' ? (
+          approved.length === 0 ? (
+            <EmptyState
+              title="No approved messages"
+              message="Approved bank messages will appear here."
+            />
+          ) : (
+            approved.map((transaction) => (
+              <ResolvedTransactionCard
                 key={transaction.id}
                 transaction={transaction}
                 budgetView={budgetView}
-                helperText="This isn’t in the budget until you approve it."
-                categoryOptions={categoryOptions}
-                selectedCategoryId={reviewCategoryIds[transaction.id] ?? null}
-                isSubmitting={reviewingTransactionId === transaction.id}
-                ignoreIsPrimary={false}
-                onSelectCategory={(categoryId) =>
-                  setReviewCategoryIds((current) => ({
-                    ...current,
-                    [transaction.id]: categoryId,
-                  }))
-                }
-                onApprove={() => void handleApproveImportedTransaction(transaction)}
-                onIgnore={() => void handleIgnoreImportedTransaction(transaction)}
               />
-            ))}
-          </InboxSection>
+            ))
+          )
         ) : null}
 
-        {incomeToReview.length > 0 ? (
-          <InboxSection title="Income — add to Ready to Assign">
-            {incomeToReview.map((transaction) => (
-              <ReviewTransactionCard
-                key={transaction.id}
-                transaction={transaction}
-                budgetView={budgetView}
-                helperText="Approve and it becomes cash you can assign."
-                categoryOptions={categoryOptions}
-                selectedCategoryId={reviewCategoryIds[transaction.id] ?? null}
-                isSubmitting={reviewingTransactionId === transaction.id}
-                ignoreIsPrimary={false}
-                onSelectCategory={(categoryId) =>
-                  setReviewCategoryIds((current) => ({
-                    ...current,
-                    [transaction.id]: categoryId,
-                  }))
-                }
-                onApprove={() => void handleApproveImportedTransaction(transaction)}
-                onIgnore={() => void handleIgnoreImportedTransaction(transaction)}
-              />
-            ))}
-          </InboxSection>
-        ) : null}
-
-        {possibleDuplicates.length > 0 ? (
-          <InboxSection title="Looks like a duplicate">
-            {possibleDuplicates.map((transaction) => (
-              <ReviewTransactionCard
-                key={transaction.id}
-                transaction={transaction}
-                budgetView={budgetView}
-                helperText="Ignore it if you already have this. Approve if it’s actually new."
-                categoryOptions={categoryOptions}
-                selectedCategoryId={reviewCategoryIds[transaction.id] ?? null}
-                isSubmitting={reviewingTransactionId === transaction.id}
-                ignoreIsPrimary
-                onSelectCategory={(categoryId) =>
-                  setReviewCategoryIds((current) => ({
-                    ...current,
-                    [transaction.id]: categoryId,
-                  }))
-                }
-                onApprove={() => void handleApproveImportedTransaction(transaction)}
-                onIgnore={() => void handleIgnoreImportedTransaction(transaction)}
-              />
-            ))}
-          </InboxSection>
-        ) : null}
-
-        {manualImportTasks.length > 0 ? (
-          <InboxSection title="Couldn’t read these">
-            {manualImportTasks.map((task) => {
-              const draft = getRecoveryDraft(task, recoveryDrafts);
-
-              return (
-                <ManualImportCard
-                  key={task.importOutcome.id}
-                  task={task}
-                  draft={draft}
-                  categoryOptions={categoryOptions}
-                  isSubmitting={recoveringOutcomeId === task.importOutcome.id}
-                  onDraftChange={(nextDraft) =>
-                    setRecoveryDrafts((current) => ({
-                      ...current,
-                      [task.importOutcome.id]: nextDraft,
-                    }))
-                  }
-                  onRecover={() => void handleRecoverUnparseableSms(task)}
-                  onIgnore={() => void handleIgnoreUnparseableSms(task)}
+        {activeTab === 'ignored' ? (
+          ignored.length + ignoredMessages.length === 0 ? (
+            <EmptyState
+              title="No ignored messages"
+              message="Ignored bank messages will appear here."
+            />
+          ) : (
+            <>
+              {ignored.map((transaction) => (
+                <ResolvedTransactionCard
+                  key={transaction.id}
+                  transaction={transaction}
+                  budgetView={budgetView}
                 />
-              );
-            })}
-          </InboxSection>
+              ))}
+              {ignoredMessages.map((task) => (
+                <View
+                  key={task.importOutcome.id}
+                  className="gap-2 rounded-2xl border border-border bg-card p-5">
+                  <Text className="font-semibold">From {task.rawSmsMessage.sender}</Text>
+                  <Text className="text-sm text-muted-foreground">
+                    {formatShortDate(toLocalDateKey(task.rawSmsMessage.receivedAt))} ·{' '}
+                    {formatImportOutcomeReason(task.importOutcome.reason)}
+                  </Text>
+                  <Text className="text-sm">{task.rawSmsMessage.body}</Text>
+                </View>
+              ))}
+            </>
+          )
         ) : null}
-
-        <CollapsibleCard
-          title="Paste a bank SMS"
-          subtitle="Until native capture is on. Same pipeline as a real message.">
-          <FormField
-            label="Sender"
-            value={debugSmsSender}
-            onChangeText={setDebugSmsSender}
-            placeholder="BANK"
-            autoCapitalize="characters"
-          />
-          <FormField
-            label="Message"
-            value={debugSmsBody}
-            onChangeText={setDebugSmsBody}
-            placeholder={createSampleDebugSmsBody()}
-            autoCapitalize="none"
-            multiline
-          />
-          {smsImportError ? <ErrorBanner message={smsImportError} /> : null}
-          <Button onPress={() => void handleImportDebugSms()} disabled={isImportingSms}>
-            <Text>{isImportingSms ? 'Importing…' : 'Import SMS'}</Text>
-          </Button>
-        </CollapsibleCard>
       </ScreenScroll>
     </SafeAreaView>
   );
@@ -472,6 +486,40 @@ function InboxSection({ title, children }: { title: string; children: React.Reac
     <View className="gap-3">
       <Text variant="large">{title}</Text>
       {children}
+    </View>
+  );
+}
+
+function ResolvedTransactionCard({
+  transaction,
+  budgetView,
+}: {
+  transaction: CanonicalTransaction;
+  budgetView: BudgetView;
+}) {
+  const categoryName = budgetView.categoryGroups
+    .flatMap((group) => group.categories)
+    .find((category) => category.id === transaction.categoryId)?.name;
+
+  return (
+    <View className="gap-2 rounded-2xl border border-border bg-card p-5">
+      <View className="flex-row items-start justify-between gap-3">
+        <View className="flex-1 gap-1">
+          <Text className="font-semibold">{transactionTitle(transaction)}</Text>
+          <Text className="text-sm text-muted-foreground">
+            {formatShortDate(toLocalDateKey(transaction.occurredAt))}
+            {' · '}
+            {transaction.kind === 'outflow' ? 'Spending' : 'Income'}
+            {categoryName ? ` · ${categoryName}` : ''}
+          </Text>
+        </View>
+        <Text className={moneyTextClass(transaction.amountCents, 'text-lg font-semibold')}>
+          {formatCurrency(transaction.amountCents, budgetView.currencyCode)}
+        </Text>
+      </View>
+      {transaction.memo ? (
+        <Text className="text-sm text-muted-foreground">{transaction.memo}</Text>
+      ) : null}
     </View>
   );
 }
