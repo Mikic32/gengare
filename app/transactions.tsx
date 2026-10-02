@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import {
   CategoryChips,
@@ -29,8 +30,9 @@ import { formatCurrency } from '@/src/features/budget/money';
 import type { BudgetView, CanonicalTransaction } from '@/src/features/budget/types';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
+import { Plus } from 'lucide-react-native';
 import * as React from 'react';
-import { Alert, Pressable, View } from 'react-native';
+import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type TransactionKindDraft = 'inflow' | 'outflow';
@@ -57,6 +59,7 @@ type TransactionGroup = {
 
 export default function TransactionsScreen() {
   const { refreshInboxCount } = useAppShell();
+  const scrollRef = React.useRef<ScrollView>(null);
   const [budgetView, setBudgetView] = React.useState<BudgetView | null>(null);
   const [transactions, setTransactions] = React.useState<CanonicalTransaction[]>([]);
   const [draft, setDraft] = React.useState<TransactionDraft>(() => createEmptyDraft());
@@ -174,6 +177,7 @@ export default function TransactionsScreen() {
     }
 
     setSaveError(null);
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
     setIsComposerOpen(true);
     setDraft({
       transactionId: transaction.id,
@@ -184,6 +188,13 @@ export default function TransactionsScreen() {
       payee: transaction.payee ?? '',
       memo: transaction.memo ?? '',
     });
+  }
+
+  function startAdding() {
+    setDraft(createEmptyDraft());
+    setSaveError(null);
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+    setIsComposerOpen(true);
   }
 
   function closeComposer() {
@@ -231,8 +242,8 @@ export default function TransactionsScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <ScreenScroll>
-        <View className="flex-row items-start justify-between gap-3 pr-14">
+      <ScreenScroll ref={scrollRef}>
+        <View className="flex-row items-start justify-between gap-3">
           <View className="flex-1 gap-1">
             <Text variant="h3">Activity</Text>
             <Text className="text-muted-foreground">Approved money in and out.</Text>
@@ -241,11 +252,7 @@ export default function TransactionsScreen() {
             <Button size="sm" variant="ghost" onPress={closeComposer}>
               <Text>Cancel</Text>
             </Button>
-          ) : (
-            <Button size="sm" onPress={() => setIsComposerOpen(true)}>
-              <Text>Add</Text>
-            </Button>
-          )}
+          ) : null}
         </View>
 
         {isComposerOpen ? (
@@ -320,7 +327,6 @@ export default function TransactionsScreen() {
           <EmptyState
             title="No activity yet"
             message="Bank SMS you approve and anything you add by hand will show up here."
-            action={{ label: 'Add a transaction', onPress: () => setIsComposerOpen(true) }}
           />
         ) : (
           ledgerGroups.map((group) => (
@@ -374,7 +380,16 @@ export default function TransactionsScreen() {
             </View>
           ))
         )}
+        {!isComposerOpen ? <View className="h-12" /> : null}
       </ScreenScroll>
+      {!isComposerOpen ? (
+        <Button
+          accessibilityLabel="Add transaction"
+          className="absolute bottom-5 right-6 h-14 w-14 rounded-full p-0 shadow-lg shadow-black/20"
+          onPress={startAdding}>
+          <Icon as={Plus} size={24} />
+        </Button>
+      ) : null}
     </SafeAreaView>
   );
 }
