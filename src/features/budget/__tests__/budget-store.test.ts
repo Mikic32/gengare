@@ -135,6 +135,42 @@ describe('budget store bootstrap', () => {
     expect(reloadedView).toEqual(assignedView);
   });
 
+  it('returns money from an envelope to clear negative ready to assign', async () => {
+    const storage = createMemoryBudgetStorage();
+    const store = createBudgetStore(storage);
+    const now = new Date('2026-06-24T10:00:00.000Z');
+    const initialView = await store.completeOnboarding(
+      {
+        accountName: 'Main account',
+        currencyCode: 'RSD',
+        startingBalanceCents: 10_000,
+        categoryGroups: [{ name: 'Essentials', categories: ['Groceries'] }],
+      },
+      now
+    );
+    const categoryId = initialView.categoryGroups[0].categories[0].id;
+
+    const overassignedView = await store.assignMoneyToCategory(
+      { categoryId, amountCents: 12_000 },
+      now
+    );
+    expectAssignableCash(overassignedView, -2_000);
+
+    const correctedView = await store.assignMoneyToCategory(
+      { categoryId, amountCents: -2_000 },
+      now
+    );
+
+    expectAssignableCash(correctedView, 0);
+    expect(correctedView.categoryGroups[0].categories[0]).toMatchObject({
+      assignedCents: 10_000,
+      availableCents: 10_000,
+    });
+    expect(
+      (await storage.readSnapshot()).assignmentEvents.map((event) => event.amountCents)
+    ).toEqual([12_000, -2_000]);
+  });
+
   it('moves money between categories inside the current month without changing ready to assign', async () => {
     const store = createBudgetStore(createMemoryBudgetStorage());
 

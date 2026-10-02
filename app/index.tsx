@@ -240,10 +240,12 @@ function BudgetScreen({
 
     try {
       onBudgetViewChange(await action());
+      return true;
     } catch (error) {
       const message = getErrorMessage(error);
       setActionError(message);
       Alert.alert(failureTitle, message);
+      return false;
     } finally {
       setIsUpdatingBudget(false);
     }
@@ -257,7 +259,7 @@ function BudgetScreen({
   }
 
   async function handleAssignMoney(categoryId: string, amountCents?: number) {
-    await runBudgetUpdate(
+    const succeeded = await runBudgetUpdate(
       () =>
         budgetAppStore.assignMoneyToCategory(
           {
@@ -269,11 +271,10 @@ function BudgetScreen({
       'Could not assign money'
     );
 
-    setAssignmentDrafts((current) => ({
-      ...current,
-      [categoryId]: '',
-    }));
-    setExpandedCategoryId(null);
+    if (succeeded) {
+      setAssignmentDrafts((current) => ({ ...current, [categoryId]: '' }));
+      setExpandedCategoryId(null);
+    }
   }
 
   async function handleMoveMoney(
@@ -281,7 +282,7 @@ function BudgetScreen({
     toCategoryId: string,
     amountCents?: number
   ) {
-    await runBudgetUpdate(
+    const succeeded = await runBudgetUpdate(
       () =>
         budgetAppStore.moveMoneyBetweenCategories(
           {
@@ -294,11 +295,33 @@ function BudgetScreen({
       'Could not move money'
     );
 
-    setAssignmentDrafts((current) => ({
-      ...current,
-      [toCategoryId]: '',
-    }));
-    setExpandedCategoryId(null);
+    if (succeeded) {
+      setAssignmentDrafts((current) => ({ ...current, [toCategoryId]: '' }));
+      setExpandedCategoryId(null);
+    }
+  }
+
+  async function handleReturnMoney(categoryId: string, amountCents?: number) {
+    const succeeded = await runBudgetUpdate(async () => {
+      const amountToReturn = readDraftAmount(categoryId, amountCents);
+      const category = budgetView.categoryGroups
+        .flatMap((group) => group.categories)
+        .find((entry) => entry.id === categoryId);
+
+      if (!category || amountToReturn > category.availableCents) {
+        throw new Error('Cannot return more than this envelope has available.');
+      }
+
+      return budgetAppStore.assignMoneyToCategory(
+        { categoryId, amountCents: -amountToReturn },
+        new Date()
+      );
+    }, 'Could not return money');
+
+    if (succeeded) {
+      setAssignmentDrafts((current) => ({ ...current, [categoryId]: '' }));
+      setExpandedCategoryId(null);
+    }
   }
 
   async function handleCreateReconciliationAdjustment() {
@@ -510,6 +533,7 @@ function BudgetScreen({
                 onAssignFromReady={(amountCents) =>
                   void handleAssignMoney(category.id, amountCents)
                 }
+                onReturnToReady={(amountCents) => void handleReturnMoney(category.id, amountCents)}
                 onMoveFrom={(fromCategoryId, amountCents) =>
                   void handleMoveMoney(fromCategoryId, category.id, amountCents)
                 }
@@ -542,7 +566,7 @@ function ReadyToAssignCard({
     amountCents > 0
       ? 'This is leftover cash. Put it in envelopes below.'
       : amountCents < 0
-        ? "You've given envelopes more than you have. Move money around."
+        ? "You've given envelopes more than you have. Open an envelope and move money back here."
         : 'Every dinar has a job.';
 
   const isNegative = amountCents < 0;
@@ -627,6 +651,7 @@ function CategoryRow({
   onLongPress,
   onDraftChange,
   onAssignFromReady,
+  onReturnToReady,
   onMoveFrom,
 }: {
   category: BudgetCategoryView;
@@ -642,6 +667,7 @@ function CategoryRow({
   onLongPress: () => void;
   onDraftChange: (value: string) => void;
   onAssignFromReady: (amountCents?: number) => void;
+  onReturnToReady: (amountCents?: number) => void;
   onMoveFrom: (fromCategoryId: string, amountCents?: number) => void;
 }) {
   const isOverspent = category.availableCents < 0;
@@ -773,6 +799,12 @@ function CategoryRow({
                   : 'Move into this envelope'}
             </Text>
           </Button>
+
+          {category.availableCents > 0 ? (
+            <Button variant="outline" onPress={() => onReturnToReady()} disabled={isUpdating}>
+              <Text>Move to Ready to Assign</Text>
+            </Button>
+          ) : null}
         </View>
       ) : null}
     </View>
