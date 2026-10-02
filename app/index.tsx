@@ -40,8 +40,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import * as React from 'react';
-import { Alert, Pressable, ScrollView, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert, Modal, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const READY_SOURCE_ID = 'ready';
 
@@ -215,6 +215,7 @@ function BudgetScreen({
   const [pendingFocusId, setPendingFocusId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [isUpdatingBudget, setIsUpdatingBudget] = React.useState(false);
+  const [isFixingNegative, setIsFixingNegative] = React.useState(false);
   const scrollRef = React.useRef<ScrollView>(null);
   const scrollOffsetRef = React.useRef(0);
   const rowRefs = React.useRef(new Map<string, View>());
@@ -224,6 +225,9 @@ function BudgetScreen({
   const approvedLedgerCents = budgetView.moneyState.reconciliationGap.approvedLedgerCents;
   const overspentCategories = budgetView.categoryGroups.flatMap((group) =>
     group.categories.filter((category) => category.availableCents < 0)
+  );
+  const availableCategories = budgetView.categoryGroups.flatMap((group) =>
+    group.categories.filter((category) => category.availableCents > 0)
   );
   const moveSources = budgetView.categoryGroups.flatMap((group) =>
     group.categories
@@ -301,26 +305,23 @@ function BudgetScreen({
     }
   }
 
-  async function handleReturnMoney(categoryId: string, amountCents?: number) {
+  async function handleCoverNegative(categoryId: string) {
+    const shortfallCents = Math.max(0, -readyToAssignCents);
+    const category = availableCategories.find((entry) => entry.id === categoryId);
+    const amountToReturn = Math.min(shortfallCents, category?.availableCents ?? 0);
     const succeeded = await runBudgetUpdate(async () => {
-      const amountToReturn = readDraftAmount(categoryId, amountCents);
-      const category = budgetView.categoryGroups
-        .flatMap((group) => group.categories)
-        .find((entry) => entry.id === categoryId);
-
-      if (!category || amountToReturn > category.availableCents) {
-        throw new Error('Cannot return more than this envelope has available.');
+      if (amountToReturn <= 0) {
+        throw new Error('This envelope has no money available to move.');
       }
 
       return budgetAppStore.assignMoneyToCategory(
         { categoryId, amountCents: -amountToReturn },
         new Date()
       );
-    }, 'Could not return money');
+    }, 'Could not fix To assign');
 
-    if (succeeded) {
-      setAssignmentDrafts((current) => ({ ...current, [categoryId]: '' }));
-      setExpandedCategoryId(null);
+    if (succeeded && amountToReturn === shortfallCents) {
+      setIsFixingNegative(false);
     }
   }
 
@@ -435,6 +436,18 @@ function BudgetScreen({
         ledgerBalance={formatCurrency(approvedLedgerCents, budgetView.currencyCode)}
         gapCents={reconciliationGapCents}
         amountCents={readyToAssignCents}
+        onFixNegative={() => setIsFixingNegative(true)}
+        isUpdating={isUpdatingBudget}
+      />
+
+      <CoverNegativeModal
+        visible={isFixingNegative && readyToAssignCents < 0}
+        shortfallCents={Math.max(0, -readyToAssignCents)}
+        currencyCode={budgetView.currencyCode}
+        categories={availableCategories}
+        isUpdating={isUpdatingBudget}
+        onClose={() => setIsFixingNegative(false)}
+        onSelect={(categoryId) => void handleCoverNegative(categoryId)}
       />
 
       {inboxCount > 0 ? (
@@ -533,7 +546,6 @@ function BudgetScreen({
                 onAssignFromReady={(amountCents) =>
                   void handleAssignMoney(category.id, amountCents)
                 }
-                onReturnToReady={(amountCents) => void handleReturnMoney(category.id, amountCents)}
                 onMoveFrom={(fromCategoryId, amountCents) =>
                   void handleMoveMoney(fromCategoryId, category.id, amountCents)
                 }
@@ -554,6 +566,8 @@ function ReadyToAssignCard({
   gapCents,
   amountCents,
   bankBalanceCents,
+  onFixNegative,
+  isUpdating,
 }: {
   amount: string;
   bankBalance: string;
@@ -561,12 +575,14 @@ function ReadyToAssignCard({
   gapCents: number;
   amountCents: number;
   bankBalanceCents: number;
+  onFixNegative: () => void;
+  isUpdating: boolean;
 }) {
   const helper =
     amountCents > 0
       ? 'This is leftover cash. Put it in envelopes below.'
       : amountCents < 0
-        ? "You've given envelopes more than you have. Open an envelope and move money back here."
+        ? "You've given envelopes more than you have. Choose where to take the difference from."
         : 'Every dinar has a job.';
 
   const isNegative = amountCents < 0;
@@ -633,7 +649,79 @@ function ReadyToAssignCard({
       <Text className={hasCash ? 'text-primary-foreground/80' : 'text-muted-foreground'}>
         {helper}
       </Text>
+      {isNegative ? (
+        <Button onPress={onFixNegative} disabled={isUpdating}>
+          <Text>Fix negative To assign</Text>
+        </Button>
+      ) : null}
     </View>
+  );
+}
+
+function CoverNegativeModal({
+  visible,
+  shortfallCents,
+  currencyCode,
+  categories,
+  isUpdating,
+  onClose,
+  onSelect,
+}: {
+  visible: boolean;
+  shortfallCents: number;
+  currencyCode: string;
+  categories: BudgetCategoryView[];
+  isUpdating: boolean;
+  onClose: () => void;
+  onSelect: (categoryId: string) => void;
+}) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
+      <Pressable className="flex-1 justify-end bg-black/50" onPress={onClose}>
+        <Pressable
+          className="gap-3 rounded-t-3xl border-t border-border bg-card px-5 pt-5"
+          style={{ paddingBottom: Math.max(insets.bottom, 20) }}
+          onPress={(event) => event.stopPropagation()}>
+          <Text className="text-lg font-semibold">Fix negative To assign</Text>
+          <Text className="text-muted-foreground">
+            Move {formatCurrency(shortfallCents, currencyCode)} back to To assign. Choose an
+            envelope:
+          </Text>
+          {categories.length === 0 ? (
+            <Text className="py-3 text-muted-foreground">
+              No envelopes have money available. Add income or correct a transaction to clear this
+              amount.
+            </Text>
+          ) : (
+            <ScrollView style={{ maxHeight: 400 }}>
+              {categories.map((category) => (
+                <Pressable
+                  key={category.id}
+                  accessibilityRole="button"
+                  disabled={isUpdating}
+                  className="rounded-xl px-3 py-3.5 active:bg-muted/60"
+                  onPress={() => onSelect(category.id)}>
+                  <Text className="font-medium">{category.name}</Text>
+                  <Text className="text-sm text-muted-foreground">
+                    Take{' '}
+                    {formatCurrency(
+                      Math.min(shortfallCents, category.availableCents),
+                      currencyCode
+                    )}{' '}
+                    · Available {formatCurrency(category.availableCents, currencyCode)}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+          <Button variant="ghost" onPress={onClose} disabled={isUpdating}>
+            <Text>Cancel</Text>
+          </Button>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -651,7 +739,6 @@ function CategoryRow({
   onLongPress,
   onDraftChange,
   onAssignFromReady,
-  onReturnToReady,
   onMoveFrom,
 }: {
   category: BudgetCategoryView;
@@ -667,7 +754,6 @@ function CategoryRow({
   onLongPress: () => void;
   onDraftChange: (value: string) => void;
   onAssignFromReady: (amountCents?: number) => void;
-  onReturnToReady: (amountCents?: number) => void;
   onMoveFrom: (fromCategoryId: string, amountCents?: number) => void;
 }) {
   const isOverspent = category.availableCents < 0;
@@ -799,12 +885,6 @@ function CategoryRow({
                   : 'Move into this envelope'}
             </Text>
           </Button>
-
-          {category.availableCents > 0 ? (
-            <Button variant="outline" onPress={() => onReturnToReady()} disabled={isUpdating}>
-              <Text>Move to Ready to Assign</Text>
-            </Button>
-          ) : null}
         </View>
       ) : null}
     </View>
